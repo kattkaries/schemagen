@@ -73,11 +73,11 @@ work_rates = st.session_state['work_rates']
 
 # Button to generate schedule
 if st.button("Generate Schedule"):
-    # MDK days
-    mdk_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday']
+    # MDK days (excluding Wednesday)
+    mdk_days = ['Monday', 'Tuesday', 'Thursday']
     mdk_assignments = {}
 
-    # Assign MDK with priorities
+    # Assign MDK with priorities for MDK days
     assigned_this_week = {emp: 0 for emp in available_employees}
     for day in mdk_days:
         avail_for_day = [
@@ -118,7 +118,8 @@ if st.button("Generate Schedule"):
     # Column mappings
     klin_cols = {'Monday': 'B', 'Tuesday': 'F', 'Wednesday': 'J', 'Thursday': 'N', 'Friday': 'R'}
     screen_cols = {'Monday': 'C', 'Tuesday': 'G', 'Wednesday': 'K', 'Thursday': 'O', 'Friday': 'S'}
-    mdk_cols = {'Monday': 'D', 'Tuesday': 'H', 'Wednesday': 'L', 'Thursday': 'P'}  # L for lunchvakt on Wednesday
+    mdk_cols = {'Monday': 'D', 'Tuesday': 'H', 'Thursday': 'P'}  # Removed Wednesday from MDK
+    lunchvakt_col = {'Wednesday': 'L'}  # Specific column for Wednesday lunchvakt
 
     # LAB row mappings per time slot (only morning and afternoon1 for Monday-Thursday, only morning for Friday)
     lab_rows = {
@@ -131,9 +132,9 @@ if st.button("Generate Schedule"):
 
     for day in days:
         avail_day = [emp for emp in available_employees if emp not in unavailable_per_day[day]]
-        mdk = mdk_assignments.get(day)
+        mdk = mdk_assignments.get(day) if day in mdk_days else None
         full_day_mdk_days = ['Tuesday', 'Thursday']
-        half_day_mdk_days = ['Monday', 'Wednesday']
+        half_day_mdk_days = ['Monday']
 
         # Remove MDK if full day
         if day in full_day_mdk_days and mdk in avail_day:
@@ -150,7 +151,7 @@ if st.button("Generate Schedule"):
         morning_assign = dict(zip(lab_people_morning, labs))
 
         # Morning Screen/MR (row 3), exclude MDK
-        morning_remainder = [emp for emp in avail_day if emp not in lab_people_morning and emp != mdk]
+        morning_remainder = [emp for emp in avail_day if emp not in lab_people_morning and (emp != mdk or day not in mdk_days)]
         screen_str_morning = '/'.join(morning_remainder)
         screen_cell_morning = f"{screen_cols[day]}3"
         sheet[screen_cell_morning] = screen_str_morning
@@ -168,7 +169,7 @@ if st.button("Generate Schedule"):
             # Prefer morning Screen/MR people for afternoon LAB
             afternoon_lab_candidates = morning_remainder.copy()
             if len(afternoon_lab_candidates) < 4:
-                afternoon_lab_candidates.extend([p for p in morning_lab_candidates if p not in afternoon_lab_candidates and p != mdk])
+                afternoon_lab_candidates.extend([p for p in morning_lab_candidates if p not in afternoon_lab_candidates and (p != mdk or day not in mdk_days)])
             afternoon_lab_candidates = afternoon_lab_candidates[:4]  # Limit to 4
             lab_people_afternoon = random.sample(afternoon_lab_candidates, min(4, len(afternoon_lab_candidates)))
 
@@ -190,18 +191,22 @@ if st.button("Generate Schedule"):
                 row = lab_rows['afternoon1'][l]
                 sheet[f"{klin_col}{row}"] = p
 
-            # Afternoon Screen/MR (row 14), include MDK for half-day MDK days
+            # Afternoon Screen/MR (row 14), include MDK for half-day MDK days or any for Wednesday
             afternoon_remainder = [emp for emp in avail_day if emp not in lab_people_afternoon]
-            if day in half_day_mdk_days and mdk and mdk not in afternoon_remainder:
-                afternoon_remainder.append(mdk)
+            if (day in half_day_mdk_days and mdk and mdk not in afternoon_remainder) or day == 'Wednesday':
+                afternoon_remainder.append(mdk) if day in half_day_mdk_days and mdk else None
             screen_str_afternoon = '/'.join(afternoon_remainder)
             screen_cell_afternoon = f"{screen_cols[day]}14"
             sheet[screen_cell_afternoon] = screen_str_afternoon
 
-        # Fill MDK/lunch
+        # Fill MDK/lunch or lunchvakt
         if day in mdk_days and mdk:
             mdk_cell = f"{mdk_cols[day]}3"
             sheet[mdk_cell] = mdk
+        elif day == 'Wednesday' and morning_remainder:  # Assign lunchvakt from morning assignments
+            lunchvakt = random.choice(morning_remainder + lab_people_morning)  # Any from LAB or Screen/MR
+            lunchvakt_cell = f"{lunchvakt_col['Wednesday']}3"
+            sheet[lunchvakt_cell] = lunchvakt
 
     # Save the new schedule
     output_file = 'generated_schedule.xlsx'
