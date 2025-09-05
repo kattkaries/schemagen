@@ -141,18 +141,16 @@ if st.button("Generate Schedule"):
 
         # Choose up to 4 people for morning LAB, preferring those not in morning Screen/MR
         morning_lab_candidates = avail_day.copy()
-        if day in half_day_mdk_days and mdk in morning_lab_candidates:
-            morning_lab_candidates.remove(mdk)  # Prefer MDK for Screen/MR in afternoon
+        if day in mdk_days and mdk in morning_lab_candidates:
+            morning_lab_candidates.remove(mdk)  # Exclude MDK from morning LAB
         lab_people_morning = random.sample(morning_lab_candidates, min(4, len(morning_lab_candidates)))
 
         # Morning LAB assignment
         random.shuffle(labs)
         morning_assign = dict(zip(lab_people_morning, labs))
 
-        # Morning Screen/MR (row 3)
-        morning_remainder = [emp for emp in avail_day if emp not in lab_people_morning]
-        if day in half_day_mdk_days and mdk and mdk not in morning_remainder:
-            morning_remainder.append(mdk)
+        # Morning Screen/MR (row 3), exclude MDK
+        morning_remainder = [emp for emp in avail_day if emp not in lab_people_morning and emp != mdk]
         screen_str_morning = '/'.join(morning_remainder)
         screen_cell_morning = f"{screen_cols[day]}3"
         sheet[screen_cell_morning] = screen_str_morning
@@ -170,7 +168,7 @@ if st.button("Generate Schedule"):
             # Prefer morning Screen/MR people for afternoon LAB
             afternoon_lab_candidates = morning_remainder.copy()
             if len(afternoon_lab_candidates) < 4:
-                afternoon_lab_candidates.extend([p for p in morning_lab_candidates if p not in afternoon_lab_candidates])
+                afternoon_lab_candidates.extend([p for p in morning_lab_candidates if p not in afternoon_lab_candidates and p != mdk])
             afternoon_lab_candidates = afternoon_lab_candidates[:4]  # Limit to 4
             lab_people_afternoon = random.sample(afternoon_lab_candidates, min(4, len(afternoon_lab_candidates)))
 
@@ -192,7 +190,7 @@ if st.button("Generate Schedule"):
                 row = lab_rows['afternoon1'][l]
                 sheet[f"{klin_col}{row}"] = p
 
-            # Afternoon Screen/MR (row 14)
+            # Afternoon Screen/MR (row 14), include MDK for half-day MDK days
             afternoon_remainder = [emp for emp in avail_day if emp not in lab_people_afternoon]
             if day in half_day_mdk_days and mdk and mdk not in afternoon_remainder:
                 afternoon_remainder.append(mdk)
