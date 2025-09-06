@@ -8,18 +8,24 @@ import plotly.express as px
 import time
 import base64  # Required for the automatic download
 
-# --- AUTO-DOWNLOAD HELPER FUNCTION ---
+# --- AUTO-DOWNLOAD HELPER FUNCTION (IMPROVED) ---
 def trigger_auto_download(file_bytes, filename):
     """
-    Generates a hidden link and clicks it to trigger a download.
+    Generates a hidden link and clicks it to trigger a download, with a small delay for robustness.
     """
     b64 = base64.b64encode(file_bytes).decode()
     href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{filename}" id="auto_download_link" style="display: none;">Download</a>'
+    
+    # Note the escaped curly braces {{ and }} for the f-string
     js = f"""
     <script>
-        const link = document.getElementById('auto_download_link');
-        link.click();
-        link.remove();
+        setTimeout(function() {{
+            const link = document.getElementById('auto_download_link');
+            if (link) {{
+                link.click();
+                link.remove();
+            }}
+        }}, 100); // 100ms delay
     </script>
     """
     st.markdown(href + js, unsafe_allow_html=True)
