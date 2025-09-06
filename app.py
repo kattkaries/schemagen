@@ -249,34 +249,32 @@ if st.button("Generera Schema"):
                 if mdk in afternoon_candidates and day in ['Tuesday', 'Thursday']:
                     afternoon_candidates.remove(mdk)
 
-                # Use sets for strict tracking
-                available_for_afternoon = set(afternoon_candidates)
-                lab_people_afternoon = set()
-                screen_mr_afternoon = set()
+                # Prioritize variety: LAB for morning Screen/MR, Screen/MR for morning LAB
+                lab_people_afternoon = []
+                screen_mr_afternoon = []
+                available_for_afternoon = afternoon_candidates[:]
 
                 # Assign LAB roles first, preferring those on Screen/MR in the morning
                 lab_slots = min(4, len(available_for_afternoon))
-                lab_candidates_afternoon = [emp for emp in available_for_afternoon if emp in morning_screen_mr] or list(available_for_afternoon)
+                lab_candidates_afternoon = [emp for emp in available_for_afternoon if emp in morning_screen_mr] or available_for_afternoon
                 if len(lab_candidates_afternoon) >= lab_slots:
-                    lab_people_afternoon.update(random.sample(lab_candidates_afternoon, lab_slots))
+                    lab_people_afternoon = random.sample(lab_candidates_afternoon, lab_slots)
                 else:
-                    lab_people_afternoon.update(lab_candidates_afternoon)
+                    lab_people_afternoon = lab_candidates_afternoon[:]
                     remaining_slots = lab_slots - len(lab_people_afternoon)
                     if remaining_slots > 0:
-                        other_candidates = [emp for emp in available_for_afternoon - lab_people_afternoon]
-                        lab_people_afternoon.update(random.sample(other_candidates, min(remaining_slots, len(other_candidates))))
+                        other_candidates = [emp for emp in available_for_afternoon if emp not in lab_people_afternoon]
+                        lab_people_afternoon.extend(random.sample(other_candidates, min(remaining_slots, len(other_candidates))))
 
-                # Only assign Screen/MR if excess employees exist (more than 4 after LAB)
-                remaining_candidates = available_for_afternoon - lab_people_afternoon
-                if len(remaining_candidates) > 0:  # Excess available, assign Screen/MR
-                    screen_mr_candidates = list(remaining_candidates)
-                    if morning_assign:
-                        morning_lab_employees = [emp for emp in morning_assign.keys() if emp in screen_mr_candidates]
-                        if morning_lab_employees:
-                            screen_mr_afternoon.update(random.sample(morning_lab_employees, min(1, len(morning_lab_employees))))
-                            screen_mr_candidates = [emp for emp in screen_mr_candidates if emp not in screen_mr_afternoon]
-                    if not screen_mr_afternoon and screen_mr_candidates:
-                        screen_mr_afternoon.add(random.choice(screen_mr_candidates))
+                # Assign Screen/MR roles, preferring those on LAB in the morning, excluding LAB assignees
+                screen_mr_candidates = [emp for emp in available_for_afternoon if emp not in lab_people_afternoon]
+                if morning_assign:
+                    morning_lab_employees = [emp for emp in morning_assign.keys() if emp in screen_mr_candidates]
+                    if morning_lab_employees:
+                        screen_mr_afternoon.extend(random.sample(morning_lab_employees, min(1, len(morning_lab_employees))))
+                        screen_mr_candidates = [emp for emp in screen_mr_candidates if emp not in screen_mr_afternoon]
+                if len(screen_mr_afternoon) < 1 and screen_mr_candidates:
+                    screen_mr_afternoon.append(random.choice(screen_mr_candidates))
 
                 afternoon_labs = labs[:]
                 # Simple derangement attempt
@@ -289,15 +287,9 @@ if st.button("Generera Schema"):
                 for p, l in afternoon_assign.items():
                     sheet[f"{klin_col}{lab_rows['afternoon1'][l]}"] = p
 
-                # Recalculate afternoon_remainder only from remaining candidates
-                afternoon_remainder = list(remaining_candidates - screen_mr_afternoon)
-                if day in ['Monday'] and mdk and mdk not in afternoon_remainder:
-                    afternoon_remainder.append(mdk)
-                # Pre-write validation
-                if any(emp in lab_people_afternoon for emp in afternoon_remainder) or any(emp in screen_mr_afternoon for emp in afternoon_remainder):
-                    st.error(f"Critical overlap on {days_sv[day]} afternoon: LAB={lab_people_afternoon}, Screen/MR={screen_mr_afternoon}, Remainder={afternoon_remainder}. Halting schedule generation.")
-                    break
-                sheet[f"{screen_cols[day]}14"] = '/'.join(sorted(afternoon_remainder))
+                # Recalculate afternoon_remainder excluding all assigned employees
+                afternoon_screen_mr_pool = [emp for emp in available_for_afternoon if emp not in lab_people_afternoon]
+                sheet[f"{screen_cols[day]}14"] = '/'.join(sorted(afternoon_screen_mr_pool))
 
             # MDK and Lunch Guard assignment
             if mdk:
