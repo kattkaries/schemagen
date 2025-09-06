@@ -3,13 +3,14 @@ import openpyxl
 import random
 from datetime import date
 import io
-from st_supabase_connection import SupabaseConnection, execute_query
+from supabase import create_client, Client
 from streamlit_kanban_board import kanban_board
 import plotly.express as px
 
-# Initialize Supabase connection
-supabase_conn = st.connection("supabase", type=SupabaseConnection)
-client = supabase_conn.client
+# Initialize Supabase client using Streamlit secrets
+supabase_url = st.secrets["SUPABASE_URL"]
+supabase_key = st.secrets["SUPABASE_KEY"]
+supabase: Client = create_client(supabase_url, supabase_key)
 
 # Pre-populated data
 pre_pop_employees = ['AH', 'LS', 'DS', 'KL', 'TH', 'LAO', 'AL', 'HS', 'AG', 'CB']
@@ -83,8 +84,8 @@ with st.expander("Assign Unavailable Employees per Day (Drag-and-Drop)"):
 
 # Load work rates from Supabase (fallback to defaults)
 default_work_rates = {emp: 1.0 for emp in pre_pop_employees}
-work_rates_query = execute_query(client.table("work_rates").select("*"))
-db_work_rates = {row['employee']: row['rate'] for row in work_rates_query.data} if work_rates_query.data else {}
+response = supabase.table("work_rates").select("*").execute()
+db_work_rates = {row['employee']: row['rate'] for row in response.data} if response.data else {}
 work_rates = {**default_work_rates, **db_work_rates}
 
 if 'work_rates' not in st.session_state:
@@ -103,17 +104,15 @@ with st.expander("Employee work rates (adjust as needed)"):
     if st.button("Save Work Rates to Database"):
         for emp in pre_pop_employees:
             rate = st.session_state['work_rates'][emp]
-            execute_query(client.table("work_rates").upsert({"employee": emp, "rate": rate}))
+            supabase.table("work_rates").upsert({"employee": emp, "rate": rate}).execute()
         st.success("Work rates saved!")
 
 work_rates = st.session_state['work_rates']
 
 # MDK Overview Bar Graph
 with st.expander("MDK Assignments Overview (Bar Graph)"):
-    mdk_count_query = execute_query(
-        client.table("mdk_assignments").select("employee, count()", count="exact").group_by("employee")
-    )
-    mdk_counts = {row['employee']: row['count'] for row in mdk_count_query.data if row['count'] > 0}
+    response = supabase.table("mdk_assignments").select("employee, count", count="exact").group("employee").execute()
+    mdk_counts = {row['employee']: row['count'] for row in response.data if row['count'] > 0}
     if mdk_counts:
         employees = list(mdk_counts.keys())
         counts = list(mdk_counts.values())
@@ -126,7 +125,7 @@ with st.expander("MDK Assignments Overview (Bar Graph)"):
 current_week = date.today().isocalendar()[1]
 with st.expander("Historical Schedules (Last 8 Weeks)"):
     # List files in bucket to check existence
-    bucket_files = client.storage.from_("schedules").list()
+    bucket_files = supabase.storage.from_("schedules").list()
     file_names = [f['name'] for f in bucket_files] if bucket_files else []
 
     for i in range(1, 9):
@@ -138,11 +137,11 @@ with st.expander("Historical Schedules (Last 8 Weeks)"):
         uploader = st.file_uploader(f"Upload/replace schedule for week {week}", type="xlsx", key=f"hist_{week}")
         if uploader:
             # Upload to Supabase Storage
-            client.upload("schedules", "local", uploader, file_name, "true")
+            supabase.storage.from_("schedules").upload(file_name, uploader, {"upsert": True})
             st.success(f"Uploaded {file_name}")
 
             # Parse and update mdk_assignments
-            downloaded = client.storage.from_("schedules").download(file_name)
+            downloaded = supabase.storage.from_("schedules").download(file_name)
             if downloaded:
                 wb = openpyxl.load_workbook(io.BytesIO(downloaded))
                 sheet = wb['Blad1']
@@ -150,7 +149,7 @@ with st.expander("Historical Schedules (Last 8 Weeks)"):
                 for day, col in mdk_cols.items():
                     emp = sheet[f"{col}3"].value
                     if emp:
-                        execute_query(client.table("mdk_assignments").upsert({"week": week, "day": day, "employee": emp}))
+                        supabase.table("mdk_assignments").upsert({"week": week, "day": day, "employee": emp}).execute()
                 st.success(f"Parsed and updated MDK assignments for week {week}")
 
 # Button to generate schedule
@@ -173,8 +172,8 @@ if st.button("Generate Schedule"):
         scores = {}
         for emp in avail_for_day:
             # Query historical MDK count from Supabase
-            history_query = execute_query(client.table("mdk_assignments").select("count()").eq("employee", emp))
-            history_count = history_query.data[0]['count'] if history_query.data else 0
+            response = supabase.table("mdk_assignments").select("count", count="exact").eq("employee", emp).execute()
+            history_count = response.data[0]['count'] if response.data and response.data[0]['count'] else 0
             rate = work_rates.get(emp, 1.0)
             this_week_penalty = assigned_this_week[emp] * 10
             scores[emp] = (history_count / rate) + this_week_penalty if rate > 0 else float('inf')
@@ -183,7 +182,7 @@ if st.button("Generate Schedule"):
         mdk_assignments[day] = chosen
         assigned_this_week[chosen] += 1
 
-    # Generate the schedule (same as before)
+    # Generate the schedule
     wb = openpyxl.load_workbook('template.xlsx')
     sheet = wb['Blad1']
 
@@ -220,8 +219,7 @@ if st.button("Generate Schedule"):
         morning_assign = dict(zip(lab_people_morning, labs))
 
         morning_remainder = [emp for emp in avail_day if emp not in lab_people_morning and (emp != mdk or day not in mdk_days)]
-        screen_str_morning = '/'.join(morning_remainder)
-        sheet[f"{screen_cols[day]}3"] = screen_str_morning
+        sheet[f"{screen_cols[day]}3"] = '/'.join(morning_remainder)
 
         klin_col = klin_cols[day]
         for p, l in morning_assign.items():
@@ -253,8 +251,7 @@ if st.button("Generate Schedule"):
             afternoon_remainder = [emp for emp in avail_day if emp not in lab_people_afternoon]
             if day in half_day_mdk_days and mdk and mdk not in afternoon_remainder:
                 afternoon_remainder.append(mdk)
-            screen_str_afternoon = '/'.join(afternoon_remainder)
-            sheet[f"{screen_cols[day]}14"] = screen_str_afternoon
+            sheet[f"{screen_cols[day]}14"] = '/'.join(afternoon_remainder)
 
         if day in mdk_days and mdk:
             sheet[f"{mdk_cols[day]}3"] = mdk
@@ -264,7 +261,7 @@ if st.button("Generate Schedule"):
 
     # Save new MDK assignments to Supabase
     for day in mdk_assignments:
-        execute_query(client.table("mdk_assignments").upsert({"week": current_week, "day": day, "employee": mdk_assignments[day]}))
+        supabase.table("mdk_assignments").upsert({"week": current_week, "day": day, "employee": mdk_assignments[day]}).execute()
 
     # Save the new schedule
     output_file = 'generated_schedule.xlsx'
