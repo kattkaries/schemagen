@@ -1,21 +1,15 @@
 import streamlit as st
 import openpyxl
 import random
-import json
-import os
 from datetime import date
+import io
+from st_supabase_connection import SupabaseConnection, execute_query
+from streamlit_kanban_board import kanban_board
+import plotly.express as px
 
-# Load MDK history if exists (may reset on Streamlit Cloud restarts)
-history_file = 'mdk_history.json'
-if os.path.exists(history_file):
-    with open(history_file, 'r') as f:
-        mdk_history = json.load(f)
-else:
-    mdk_history = {}
-
-# Initialize session state for temporary history if not already set
-if 'mdk_history' not in st.session_state:
-    st.session_state['mdk_history'] = mdk_history
+# Initialize Supabase connection
+supabase_conn = st.connection("supabase", type=SupabaseConnection)
+client = supabase_conn.client
 
 # Pre-populated data
 pre_pop_employees = ['AH', 'LS', 'DS', 'KL', 'TH', 'LAO', 'AL', 'HS', 'AG', 'CB']
@@ -45,21 +39,59 @@ unavailable_whole_week = st.multiselect(
 
 available_employees = [emp for emp in available_week if emp not in unavailable_whole_week]
 
-# Inputs for unavailable per day
-st.write("Note: For drag-and-drop functionality, consider integrating a custom component like 'streamlit-draggable-list'.")
-unavailable_per_day = {}
+# Drag-and-drop for unavailable per day using Kanban board
 days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-for day in days:
-    unavailable_per_day[day] = st.multiselect(
-        f"Initials of employees unavailable on {day}",
-        options=available_employees,
-        default=pre_unavailable.get(day, [])
+with st.expander("Assign Unavailable Employees per Day (Drag-and-Drop)"):
+    st.write("Drag employees from 'Available' to 'Unavailable [Day]' columns.")
+
+    stages = [
+        {"id": "available", "name": "Available", "color": "#27ae60"},
+    ] + [
+        {"id": day.lower(), "name": f"Unavailable {day}", "color": "#e74c3c"} for day in days
+    ]
+
+    initial_kanban_data = [{"id": emp, "stage": "available", "company_name": emp} for emp in available_employees]
+
+    # Apply pre-unavailable defaults
+    for day, emps in pre_unavailable.items():
+        for emp in emps:
+            if emp in available_employees:
+                for item in initial_kanban_data:
+                    if item["id"] == emp:
+                        item["stage"] = day.lower()
+                        break
+
+    # Load or initialize kanban data in session state
+    if 'kanban_data' not in st.session_state or len(st.session_state['kanban_data']) != len(available_employees):
+        st.session_state['kanban_data'] = initial_kanban_data
+
+    result = kanban_board(
+        board=stages,
+        data=st.session_state['kanban_data'],
+        key="unavailable_board"
     )
+
+    if result and result.get("type") == "card_move":
+        for item in st.session_state['kanban_data']:
+            if item["id"] == result["data"]["id"]:
+                item["stage"] = result["stage"]
+                break
+        st.rerun()  # Rerun to reflect changes
+
+    # Extract unavailable_per_day from kanban data
+    unavailable_per_day = {day: [item["id"] for item in st.session_state['kanban_data'] if item["stage"] == day.lower()] for day in days}
+
+# Load work rates from Supabase (fallback to defaults)
+default_work_rates = {emp: 1.0 for emp in pre_pop_employees}
+work_rates_query = execute_query(client.table("work_rates").select("*"))
+db_work_rates = {row['employee']: row['rate'] for row in work_rates_query.data} if work_rates_query.data else {}
+work_rates = {**default_work_rates, **db_work_rates}
+
+if 'work_rates' not in st.session_state:
+    st.session_state['work_rates'] = work_rates
 
 # Collapsible segment for work rates
 with st.expander("Employee work rates (adjust as needed)"):
-    if 'work_rates' not in st.session_state:
-        st.session_state['work_rates'] = {emp: 1.0 for emp in pre_pop_employees}
     for emp in pre_pop_employees:
         st.session_state['work_rates'][emp] = st.number_input(
             f"{emp} work rate (0.0 to 1.0)",
@@ -68,8 +100,58 @@ with st.expander("Employee work rates (adjust as needed)"):
             value=st.session_state['work_rates'][emp],
             step=0.05
         )
+    if st.button("Save Work Rates to Database"):
+        for emp in pre_pop_employees:
+            rate = st.session_state['work_rates'][emp]
+            execute_query(client.table("work_rates").upsert({"employee": emp, "rate": rate}))
+        st.success("Work rates saved!")
 
 work_rates = st.session_state['work_rates']
+
+# MDK Overview Bar Graph
+with st.expander("MDK Assignments Overview (Bar Graph)"):
+    mdk_count_query = execute_query(
+        client.table("mdk_assignments").select("employee, count()", count="exact").group_by("employee")
+    )
+    mdk_counts = {row['employee']: row['count'] for row in mdk_count_query.data if row['count'] > 0}
+    if mdk_counts:
+        employees = list(mdk_counts.keys())
+        counts = list(mdk_counts.values())
+        fig = px.bar(x=employees, y=counts, labels={'x': 'Employee', 'y': 'MDK Assignments'}, title="MDK Assignments per Employee")
+        st.plotly_chart(fig)
+    else:
+        st.info("No MDK assignments in history yet.")
+
+# Historical Schedules Upload (last 8 weeks)
+current_week = date.today().isocalendar()[1]
+with st.expander("Historical Schedules (Last 8 Weeks)"):
+    # List files in bucket to check existence
+    bucket_files = client.storage.from_("schedules").list()
+    file_names = [f['name'] for f in bucket_files] if bucket_files else []
+
+    for i in range(1, 9):
+        week = current_week - i
+        file_name = f"week_{week}.xlsx"
+        st.write(f"Week {week}")
+        status = "uploaded" if file_name in file_names else "not uploaded"
+        st.write(f"Current file: {status}")
+        uploader = st.file_uploader(f"Upload/replace schedule for week {week}", type="xlsx", key=f"hist_{week}")
+        if uploader:
+            # Upload to Supabase Storage
+            client.upload("schedules", "local", uploader, file_name, "true")
+            st.success(f"Uploaded {file_name}")
+
+            # Parse and update mdk_assignments
+            downloaded = client.storage.from_("schedules").download(file_name)
+            if downloaded:
+                wb = openpyxl.load_workbook(io.BytesIO(downloaded))
+                sheet = wb['Blad1']
+                mdk_cols = {'Monday': 'D', 'Tuesday': 'H', 'Thursday': 'P'}  # Exclude Wednesday
+                for day, col in mdk_cols.items():
+                    emp = sheet[f"{col}3"].value
+                    if emp:
+                        execute_query(client.table("mdk_assignments").upsert({"week": week, "day": day, "employee": emp}))
+                st.success(f"Parsed and updated MDK assignments for week {week}")
 
 # Button to generate schedule
 if st.button("Generate Schedule"):
@@ -77,7 +159,7 @@ if st.button("Generate Schedule"):
     mdk_days = ['Monday', 'Tuesday', 'Thursday']
     mdk_assignments = {}
 
-    # Assign MDK with priorities for MDK days
+    # Assign MDK with priorities (using Supabase history)
     assigned_this_week = {emp: 0 for emp in available_employees}
     for day in mdk_days:
         avail_for_day = [
@@ -90,7 +172,9 @@ if st.button("Generate Schedule"):
 
         scores = {}
         for emp in avail_for_day:
-            history_count = st.session_state['mdk_history'].get(emp, 0)
+            # Query historical MDK count from Supabase
+            history_query = execute_query(client.table("mdk_assignments").select("count()").eq("employee", emp))
+            history_count = history_query.data[0]['count'] if history_query.data else 0
             rate = work_rates.get(emp, 1.0)
             this_week_penalty = assigned_this_week[emp] * 10
             scores[emp] = (history_count / rate) + this_week_penalty if rate > 0 else float('inf')
@@ -98,30 +182,18 @@ if st.button("Generate Schedule"):
         chosen = min(scores, key=scores.get)
         mdk_assignments[day] = chosen
         assigned_this_week[chosen] += 1
-        st.session_state['mdk_history'][chosen] = st.session_state['mdk_history'].get(chosen, 0) + 1
 
-    # Save MDK history to file (may not persist on Streamlit Cloud)
-    try:
-        with open(history_file, 'w') as f:
-            json.dump(st.session_state['mdk_history'], f)
-    except Exception as e:
-        st.warning(f"Could not save MDK history to file: {e}. Using session state for this session.")
-
-    # Generate the schedule
+    # Generate the schedule (same as before)
     wb = openpyxl.load_workbook('template.xlsx')
     sheet = wb['Blad1']
 
-    # Update week number
-    current_week = date.today().isocalendar()[1]
     sheet['A1'] = f"v.{current_week}"
 
-    # Column mappings
     klin_cols = {'Monday': 'B', 'Tuesday': 'F', 'Wednesday': 'J', 'Thursday': 'N', 'Friday': 'R'}
     screen_cols = {'Monday': 'C', 'Tuesday': 'G', 'Wednesday': 'K', 'Thursday': 'O', 'Friday': 'S'}
-    mdk_cols = {'Monday': 'D', 'Tuesday': 'H', 'Thursday': 'P'}  # Removed Wednesday from MDK
-    lunchvakt_col = {'Wednesday': 'L'}  # Specific column for Wednesday lunchvakt
+    mdk_cols = {'Monday': 'D', 'Tuesday': 'H', 'Thursday': 'P'}
+    lunchvakt_col = {'Wednesday': 'L'}
 
-    # LAB row mappings per time slot (only morning and afternoon1 for Monday-Thursday, only morning for Friday)
     lab_rows = {
         'morning1': {'LAB 3': 4, 'LAB 6': 5, 'LAB 9': 6, 'LAB 10': 7},
         'morning2': {'LAB 3': 9, 'LAB 6': 10, 'LAB 9': 11, 'LAB 10': 12},
@@ -136,44 +208,33 @@ if st.button("Generate Schedule"):
         full_day_mdk_days = ['Tuesday', 'Thursday']
         half_day_mdk_days = ['Monday']
 
-        # Remove MDK if full day
         if day in full_day_mdk_days and mdk in avail_day:
             avail_day.remove(mdk)
 
-        # Choose up to 4 people for morning LAB, preferring those not in morning Screen/MR
         morning_lab_candidates = avail_day.copy()
         if day in mdk_days and mdk in morning_lab_candidates:
-            morning_lab_candidates.remove(mdk)  # Exclude MDK from morning LAB
+            morning_lab_candidates.remove(mdk)
         lab_people_morning = random.sample(morning_lab_candidates, min(4, len(morning_lab_candidates)))
 
-        # Morning LAB assignment
         random.shuffle(labs)
         morning_assign = dict(zip(lab_people_morning, labs))
 
-        # Morning Screen/MR (row 3), exclude MDK
         morning_remainder = [emp for emp in avail_day if emp not in lab_people_morning and (emp != mdk or day not in mdk_days)]
         screen_str_morning = '/'.join(morning_remainder)
-        screen_cell_morning = f"{screen_cols[day]}3"
-        sheet[screen_cell_morning] = screen_str_morning
+        sheet[f"{screen_cols[day]}3"] = screen_str_morning
 
-        # Fill morning LAB cells
         klin_col = klin_cols[day]
         for p, l in morning_assign.items():
-            row = lab_rows['morning1'][l]
-            sheet[f"{klin_col}{row}"] = p
-            row = lab_rows['morning2'][l]
-            sheet[f"{klin_col}{row}"] = p
+            sheet[f"{klin_col}{lab_rows['morning1'][l]}"] = p
+            sheet[f"{klin_col}{lab_rows['morning2'][l]}"] = p
 
-        # Afternoon assignments (skip for Friday afternoon)
         if day != 'Friday':
-            # Prefer morning Screen/MR people for afternoon LAB
             afternoon_lab_candidates = morning_remainder.copy()
             if len(afternoon_lab_candidates) < 4:
                 afternoon_lab_candidates.extend([p for p in morning_lab_candidates if p not in afternoon_lab_candidates and (p != mdk or day not in mdk_days)])
-            afternoon_lab_candidates = afternoon_lab_candidates[:4]  # Limit to 4
+            afternoon_lab_candidates = afternoon_lab_candidates[:4]
             lab_people_afternoon = random.sample(afternoon_lab_candidates, min(4, len(afternoon_lab_candidates)))
 
-            # Afternoon LAB assignment (derangement from morning)
             afternoon_labs = labs.copy()
             attempts = 0
             while attempts < 100:
@@ -186,27 +247,24 @@ if st.button("Generate Schedule"):
                 st.warning(f"Could not find derangement for {day} afternoon LAB assignments. Using random.")
                 afternoon_assign = dict(zip(lab_people_afternoon, afternoon_labs))
 
-            # Fill afternoon LAB cells
             for p, l in afternoon_assign.items():
-                row = lab_rows['afternoon1'][l]
-                sheet[f"{klin_col}{row}"] = p
+                sheet[f"{klin_col}{lab_rows['afternoon1'][l]}"] = p
 
-            # Afternoon Screen/MR (row 14), include MDK for half-day MDK days or any for Wednesday
             afternoon_remainder = [emp for emp in avail_day if emp not in lab_people_afternoon]
-            if (day in half_day_mdk_days and mdk and mdk not in afternoon_remainder) or day == 'Wednesday':
-                afternoon_remainder.append(mdk) if day in half_day_mdk_days and mdk else None
+            if day in half_day_mdk_days and mdk and mdk not in afternoon_remainder:
+                afternoon_remainder.append(mdk)
             screen_str_afternoon = '/'.join(afternoon_remainder)
-            screen_cell_afternoon = f"{screen_cols[day]}14"
-            sheet[screen_cell_afternoon] = screen_str_afternoon
+            sheet[f"{screen_cols[day]}14"] = screen_str_afternoon
 
-        # Fill MDK/lunch or lunchvakt
         if day in mdk_days and mdk:
-            mdk_cell = f"{mdk_cols[day]}3"
-            sheet[mdk_cell] = mdk
-        elif day == 'Wednesday' and morning_remainder:  # Assign lunchvakt from morning assignments
-            lunchvakt = random.choice(morning_remainder + lab_people_morning)  # Any from LAB or Screen/MR
-            lunchvakt_cell = f"{lunchvakt_col['Wednesday']}3"
-            sheet[lunchvakt_cell] = lunchvakt
+            sheet[f"{mdk_cols[day]}3"] = mdk
+        elif day == 'Wednesday' and morning_remainder:
+            lunchvakt = random.choice(morning_remainder + lab_people_morning)
+            sheet[f"{lunchvakt_col['Wednesday']}3"] = lunchvakt
+
+    # Save new MDK assignments to Supabase
+    for day in mdk_assignments:
+        execute_query(client.table("mdk_assignments").upsert({"week": current_week, "day": day, "employee": mdk_assignments[day]}))
 
     # Save the new schedule
     output_file = 'generated_schedule.xlsx'

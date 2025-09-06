@@ -1,2 +1,5 @@
 streamlit
 openpyxl
+st-supabase-connection
+streamlit-kanban-board-goviceversa
+plotly
