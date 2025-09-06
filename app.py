@@ -31,32 +31,13 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- OPTIMERING: CACHELAGRADE FUNKTIONER ---
-@st.cache_data
-def load_mdk_assignments():
-    """Hämtar MDK-historik från Supabase och cachelagrar resultatet."""
-    response = supabase.table("mdk_assignments").select("employee").execute()
-    return response.data if response.data else []
-
-@st.cache_data
-def list_schedule_files():
-    """Listar historiska scheman från Supabase och cachelagrar resultatet."""
-    bucket_files = supabase.storage.from_("schedules").list()
-    return [f['name'] for f in bucket_files] if bucket_files else []
-
-@st.cache_data
-def load_work_rates():
-    """Hämtar arbetstider från Supabase och cachelagrar resultatet."""
-    response = supabase.table("work_rates").select("*").execute()
-    return {row['employee']: row['rate'] for row in response.data} if response.data else {}
-
 # --- SWEDISH TRANSLATION SETUP ---
 days_sv = {
     'Monday': 'Måndag', 'Tuesday': 'Tisdag', 'Wednesday': 'Onsdag', 
     'Thursday': 'Torsdag', 'Friday': 'Fredag'
 }
 
-# Håller reda på bekräftelsesteget för radering
+# --- TILLÄGG: Håller reda på bekräftelsesteget för radering ---
 if 'confirm_delete' not in st.session_state:
     st.session_state.confirm_delete = False
 
@@ -83,6 +64,7 @@ available_week = st.multiselect(
     default=pre_pop_employees
 )
 
+# Input for unavailable whole week
 unavailable_whole_week = st.multiselect(
     "Initialer för medarbetare som är otillgängliga hela veckan",
     options=available_week,
@@ -91,6 +73,7 @@ unavailable_whole_week = st.multiselect(
 
 available_employees = [emp for emp in available_week if emp not in unavailable_whole_week]
 
+# Multiselect for unavailable per day
 days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 with st.expander("Ange otillgänglighet per dag", expanded=True):
     unavailable_per_day = {}
@@ -102,8 +85,10 @@ with st.expander("Ange otillgänglighet per dag", expanded=True):
             default=default_values
         )
 
+# MDK Overview Bar Graph
 with st.expander("MDK-fördelning de senaste månaderna (stapeldiagram)"):
-    assignments = load_mdk_assignments()
+    response = supabase.table("mdk_assignments").select("employee").execute()
+    assignments = response.data if response.data else []
     mdk_counts = {}
     for assignment in assignments:
         emp = assignment['employee']
@@ -119,9 +104,11 @@ with st.expander("MDK-fördelning de senaste månaderna (stapeldiagram)"):
     else:
         st.info("Inga MDK-uppdrag i historiken ännu.")
 
+# Historical Schedules Upload (last 8 weeks)
 current_week = date.today().isocalendar()[1]
 with st.expander("Historiska scheman (Senaste 8 veckorna)"):
-    file_names = list_schedule_files()
+    bucket_files = supabase.storage.from_("schedules").list()
+    file_names = [f['name'] for f in bucket_files] if bucket_files else []
 
     for i in range(1, 9):
         week = current_week - i
@@ -134,9 +121,6 @@ with st.expander("Historiska scheman (Senaste 8 veckorna)"):
             file_content = uploader.getvalue()
             supabase.storage.from_("schedules").upload(file_name, file_content, {"upsert": "true"})
             st.success(f"Laddade upp {file_name}")
-            
-            list_schedule_files.clear()
-            
             time.sleep(1)
 
             downloaded = supabase.storage.from_("schedules").download(file_name)
@@ -154,9 +138,8 @@ with st.expander("Historiska scheman (Senaste 8 veckorna)"):
                         except Exception as e:
                             st.error(f"Misslyckades med att spara MDK-uppdrag för {days_sv[day]}: {e}")
                 st.success(f"Läste in och uppdaterade MDK-uppdrag för vecka {week}. {parsed_days} dagar tillagda.")
-                load_mdk_assignments.clear()
-                st.rerun()
 
+    # --- TILLÄGG: KNAPP FÖR ATT RENSA MDK-HISTORIK ---
     st.markdown("---")
     if st.button("Rensa all MDK-historik"):
         st.session_state.confirm_delete = True
@@ -164,13 +147,12 @@ with st.expander("Historiska scheman (Senaste 8 veckorna)"):
     if st.session_state.confirm_delete:
         st.warning("Är du säker på att du vill radera all MDK-historik? Detta kan inte ångras.")
         
-        col1, col2, _ = st.columns([1.5, 1, 4])
+        col1, col2, _ = st.columns([1.5, 1, 4]) # Justerade kolumnbredder för text
         with col1:
             if st.button("Ja, radera all historik", type="primary"):
                 try:
                     supabase.table("mdk_assignments").delete().neq("week", -1).execute()
                     st.success("All MDK-historik har raderats.")
-                    load_mdk_assignments.clear()
                     st.session_state.confirm_delete = False
                     time.sleep(2)
                     st.rerun()
@@ -181,17 +163,21 @@ with st.expander("Historiska scheman (Senaste 8 veckorna)"):
                 st.session_state.confirm_delete = False
                 st.rerun()
 
+# Use percentages (0-100) for work rates
 default_work_rates = {emp: 100 for emp in pre_pop_employees}
-db_work_rates = load_work_rates()
+response = supabase.table("work_rates").select("*").execute()
+db_work_rates = {row['employee']: row['rate'] for row in response.data} if response.data else {}
 work_rates = {**default_work_rates, **db_work_rates}
 
 if 'work_rates' not in st.session_state:
     st.session_state['work_rates'] = work_rates
 
+# Collapsible segment for work rates
 with st.expander("Klinisk arbetstid per medarbetare (justera vid behov)"):
     for emp in pre_pop_employees:
         key = f"rate_{emp}"
         value_from_state = int(st.session_state['work_rates'].get(emp, 100))
+
         st.session_state['work_rates'][emp] = st.number_input(
             f"{emp} arbetstid (0 till 100%)",
             min_value=0,
@@ -209,7 +195,6 @@ with st.expander("Klinisk arbetstid per medarbetare (justera vid behov)"):
             ]
             supabase.table("work_rates").upsert(records_to_save).execute()
             st.success("Arbetstid sparad!")
-            load_work_rates.clear()
             with st.spinner("Uppdaterar..."):
                 time.sleep(1)
             st.rerun()
@@ -218,6 +203,7 @@ with st.expander("Klinisk arbetstid per medarbetare (justera vid behov)"):
 
 work_rates = st.session_state['work_rates']
 
+# Button to generate schedule
 if st.button("Generera Schema"):
     with st.spinner("Genererar schema, vänligen vänta..."):
         mdk_days = ['Monday', 'Tuesday', 'Thursday']
@@ -261,19 +247,21 @@ if st.button("Generera Schema"):
             avail_day = [emp for emp in available_employees if emp not in unavailable_per_day.get(day, [])]
             mdk = mdk_assignments.get(day)
             
+            # Simplified logic for who is available for labs
             lab_candidates = avail_day[:]
-            if mdk in lab_candidates and day in ['Tuesday', 'Thursday']:
+            if mdk in lab_candidates and day in ['Tuesday', 'Thursday']:  # Full-day MDK
                 lab_candidates.remove(mdk)
 
+            # Morning assignment
             morning_candidates = lab_candidates[:]
-            if mdk in morning_candidates and day in ['Monday']:
+            if mdk in morning_candidates and day in ['Monday']:  # Half-day MDK
                 morning_candidates.remove(mdk)
 
             lab_people_morning = random.sample(morning_candidates, k=min(len(morning_candidates), 4))
             random.shuffle(labs)
             morning_assign = dict(zip(lab_people_morning, labs))
             morning_remainder = [emp for emp in avail_day if emp not in lab_people_morning]
-            
+            # Track morning Screen/MR assignments
             morning_screen_mr = morning_remainder[:]
 
             sheet[f"{screen_cols[day]}3"] = '/'.join(sorted([emp for emp in morning_remainder if (emp != mdk or day not in mdk_days)]))
@@ -282,13 +270,17 @@ if st.button("Generera Schema"):
                 sheet[f"{klin_col}{lab_rows['morning1'][l]}"] = p
                 sheet[f"{klin_col}{lab_rows['morning2'][l]}"] = p
 
+            # Afternoon assignment (not Friday)
             if day != 'Friday':
                 available_for_afternoon = lab_candidates[:]
+                # Remove MDK if present for full-day MDK days
                 if mdk in available_for_afternoon and day in ['Tuesday', 'Thursday']:
                     available_for_afternoon.remove(mdk)
 
                 lab_people_afternoon = []
+                screen_mr_afternoon = []
                 
+                # Assign LAB roles first, preferring those on Screen/MR in the morning
                 lab_slots = min(4, len(available_for_afternoon))
                 lab_candidates_afternoon = [emp for emp in available_for_afternoon if emp in morning_screen_mr] or available_for_afternoon
                 if len(lab_candidates_afternoon) >= lab_slots:
@@ -299,9 +291,20 @@ if st.button("Generera Schema"):
                     if remaining_slots > 0:
                         other_candidates = [emp for emp in available_for_afternoon if emp not in lab_people_afternoon]
                         lab_people_afternoon.extend(random.sample(other_candidates, min(remaining_slots, len(other_candidates))))
-                
+
+                # Assign Screen/MR roles, preferring those on LAB in the morning, excluding LAB assignees
+                screen_mr_candidates = [emp for emp in available_for_afternoon if emp not in lab_people_afternoon]
+                if morning_assign:
+                    morning_lab_employees = [emp for emp in morning_assign.keys() if emp in screen_mr_candidates]
+                    if morning_lab_employees:
+                        screen_mr_afternoon.extend(random.sample(morning_lab_employees, min(1, len(morning_lab_employees))))
+                        screen_mr_candidates = [emp for emp in screen_mr_candidates if emp not in screen_mr_afternoon]
+                if len(screen_mr_afternoon) < 1 and screen_mr_candidates:
+                    screen_mr_afternoon.append(random.choice(screen_mr_candidates))
+
                 afternoon_labs = labs[:]
-                for _ in range(10):
+                # Simple derangement attempt
+                for _ in range(10):  # Try to shuffle to avoid same lab
                     random.shuffle(afternoon_labs)
                     afternoon_assign = dict(zip(lab_people_afternoon, afternoon_labs))
                     if all(afternoon_assign.get(p) != morning_assign.get(p) for p in afternoon_assign if p in morning_assign):
@@ -310,21 +313,27 @@ if st.button("Generera Schema"):
                 for p, l in afternoon_assign.items():
                     sheet[f"{klin_col}{lab_rows['afternoon1'][l]}"] = p
 
+                # The people in the afternoon Screen/MR column are simply everyone available 
+                # for the afternoon, minus those who were assigned to a LAB role.
                 afternoon_screen_mr_pool = [emp for emp in available_for_afternoon if emp not in lab_people_afternoon]
                 sheet[f"{screen_cols[day]}14"] = '/'.join(sorted(afternoon_screen_mr_pool))
 
+            # MDK and Lunch Guard assignment
             if mdk:
                 sheet[f"{mdk_cols[day]}3"] = mdk
             elif day == 'Wednesday' and avail_day:
-                sheet[f"{lunchvakt_col['Wednesday']}3"] = random.choice(avail_day)
-        
+                sheet[f"{lunchvakt_col['Wednesday']}3"] = random.choice(avail_ay)
+
+        # Save new MDK assignments to Supabase
         for day, emp in mdk_assignments.items():
             supabase.table("mdk_assignments").upsert({"week": current_week, "day": day, "employee": emp}).execute()
-        
+
+        # Save the new schedule to a byte stream
         output_file = io.BytesIO()
         wb.save(output_file)
         
         st.success("Schemat har genererats!")
+        # --- MANUAL DOWNLOAD ---
         output_file.seek(0)
         st.download_button(
             label="Ladda ner schemat",
