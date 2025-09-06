@@ -7,18 +7,20 @@ from supabase import create_client, Client
 import plotly.express as px
 import time
 
-# --- CSS FÖR ATT STYLA EN SPECIFIK MULTISELECT (KORREKT VERSION) ---
+# --- CSS FÖR ATT STYLA EN SPECIFIK MULTISELECT (MEST ROBUSTA VERSIONEN) ---
 st.markdown("""
 <style>
-    /* Hitta vår unika markör, och välj sedan NÄSTA syskonelement (som är vår multiselect) */
-    #marker_for_green_multiselect + div[data-testid="stMultiSelect"] [data-baseweb="tag"] {
-        background-color: #2E8B57; /* SeaGreen */
+    /* Hitta vår markör, välj nästa div (som är en osynlig wrapper), 
+    och hitta sedan multiselect-widgeten inuti den.
+    */
+    #marker_for_green_multiselect + div div[data-testid="stMultiSelect"] [data-baseweb="tag"] {
+        background-color: #2E8B57 !important; /* SeaGreen med !important för att tvinga igenom stilen */
         border-radius: 0.5rem;
     }
 
-    /* Bonus: Gör texten och krysset i tagen vita för bättre kontrast */
-    #marker_for_green_multiselect + div[data-testid="stMultiSelect"] [data-baseweb="tag"] span,
-    #marker_for_green_multiselect + div[data-testid="stMultiSelect"] [data-baseweb="tag"] span[role="button"] {
+    /* Styla texten och krysset inuti */
+    #marker_for_green_multiselect + div div[data-testid="stMultiSelect"] [data-baseweb="tag"] span,
+    #marker_for_green_multiselect + div div[data-testid="stMultiSelect"] [data-baseweb="tag"] span[role="button"] {
         color: white !important;
     }
 </style>
