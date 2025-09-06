@@ -42,7 +42,8 @@ available_employees = [emp for emp in available_week if emp not in unavailable_w
 
 # Multiselect for unavailable per day
 days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-with st.expander("Assign Unavailable Employees per Day"):
+# CHANGE 1: Expander now starts open
+with st.expander("Assign Unavailable Employees per Day", expanded=True):
     unavailable_per_day = {}
     for day in days:
         # Filter default values to only include employees still available
@@ -52,6 +53,61 @@ with st.expander("Assign Unavailable Employees per Day"):
             options=available_employees,
             default=default_values
         )
+
+# MDK Overview Bar Graph
+with st.expander("MDK Assignments Overview (Bar Graph)"):
+    response = supabase.table("mdk_assignments").select("employee").execute()
+    assignments = response.data if response.data else []
+    mdk_counts = {}
+    for assignment in assignments:
+        emp = assignment['employee']
+        mdk_counts[emp] = mdk_counts.get(emp, 0) + 1
+    mdk_counts = {k: v for k, v in mdk_counts.items() if v > 0}
+    if mdk_counts:
+        employees = list(mdk_counts.keys())
+        counts = list(mdk_counts.values())
+        fig = px.bar(x=employees, y=counts, labels={'x': 'Employee', 'y': 'MDK Assignments'}, title="MDK Assignments per Employee")
+        st.plotly_chart(fig)
+    else:
+        st.info("No MDK assignments in history yet.")
+
+# Historical Schedules Upload (last 8 weeks)
+current_week = date.today().isocalendar()[1]
+with st.expander("Historical Schedules (Last 8 Weeks)"):
+    bucket_files = supabase.storage.from_("schedules").list()
+    file_names = [f['name'] for f in bucket_files] if bucket_files else []
+
+    for i in range(1, 9):
+        week = current_week - i
+        file_name = f"week_{week}.xlsx"
+        st.write(f"Week {week}")
+        status = "uploaded" if file_name in file_names else "not uploaded"
+        st.write(f"Current file: {status}")
+        uploader = st.file_uploader(f"Upload/replace schedule for week {week}", type="xlsx", key=f"hist_{week}")
+        if uploader:
+            file_content = uploader.getvalue()
+            supabase.storage.from_("schedules").upload(file_name, file_content, {"upsert": "true"})
+            st.success(f"Uploaded {file_name}")
+            time.sleep(1)
+
+            downloaded = supabase.storage.from_("schedules").download(file_name)
+            if downloaded:
+                wb = openpyxl.load_workbook(io.BytesIO(downloaded))
+                sheet = wb["Blad1"] if "Blad1" in wb.sheetnames else wb.active
+                mdk_cols = {'Monday': 'D', 'Tuesday': 'H', 'Thursday': 'P'}
+                parsed_days = 0
+                for day, col in mdk_cols.items():
+                    cell_value = sheet.cell(row=3, column=openpyxl.utils.column_index_from_string(col)).value
+                    if cell_value and isinstance(cell_value, str) and cell_value.strip() in pre_pop_employees:
+                        try:
+                            supabase.table("mdk_assignments").upsert({"week": week, "day": day, "employee": cell_value.strip()}).execute()
+                            parsed_days += 1
+                        except Exception as e:
+                            st.error(f"Failed to upsert {day} MDK assignment: {e}")
+                st.success(f"Parsed and updated MDK assignments for week {week}. {parsed_days} days added.")
+
+
+# CHANGE 2 & 3: Work rates section is now last, and the button is moved inside.
 
 # Load work rates from Supabase (fallback to defaults)
 default_work_rates = {emp: 1.0 for emp in pre_pop_employees}
@@ -70,100 +126,30 @@ with st.expander("Employee work rates (adjust as needed)"):
             min_value=0.0,
             max_value=1.0,
             value=float(st.session_state['work_rates'][emp]),
-            step=0.05
+            step=0.05,
+            key=f"rate_{emp}" # Added key for stability
         )
-if st.button("Save Work Rates to Database"):
-    try:
-        # 1. Prepare a list of all records to be saved
-        records_to_save = [
-            {"employee": emp, "rate": st.session_state['work_rates'][emp]}
-            for emp in pre_pop_employees
-        ]
-
-        # 2. Upsert the entire list in one single, efficient command
-        supabase.table("work_rates").upsert(records_to_save).execute()
-
-        st.success("Work rates saved successfully!")
-        
-        # Optional: Add a little spinner and rerun to show the data is reloaded
-        with st.spinner("Refreshing..."):
-            time.sleep(1)
-        # FIX: Use the modern st.rerun() instead of the old experimental name
-        st.rerun()
-
-    except Exception as e:
-        st.error(f"An error occurred while saving to the database: {e}")
+    
+    if st.button("Save Work Rates to Database"):
+        try:
+            records_to_save = [
+                {"employee": emp, "rate": st.session_state['work_rates'][emp]}
+                for emp in pre_pop_employees
+            ]
+            supabase.table("work_rates").upsert(records_to_save).execute()
+            st.success("Work rates saved successfully!")
+            with st.spinner("Refreshing..."):
+                time.sleep(1)
+            st.rerun()
+        except Exception as e:
+            st.error(f"An error occurred while saving to the database: {e}")
 
 work_rates = st.session_state['work_rates']
 
-# MDK Overview Bar Graph
-with st.expander("MDK Assignments Overview (Bar Graph)"):
-    # Fetch all MDK assignments and group by employee in Python
-    response = supabase.table("mdk_assignments").select("employee").execute()
-    assignments = response.data if response.data else []
-    mdk_counts = {}
-    for assignment in assignments:
-        emp = assignment['employee']
-        mdk_counts[emp] = mdk_counts.get(emp, 0) + 1
-    mdk_counts = {k: v for k, v in mdk_counts.items() if v > 0}  # Only show employees with >0 MDKs
-    if mdk_counts:
-        employees = list(mdk_counts.keys())
-        counts = list(mdk_counts.values())
-        fig = px.bar(x=employees, y=counts, labels={'x': 'Employee', 'y': 'MDK Assignments'}, title="MDK Assignments per Employee")
-        st.plotly_chart(fig)
-    else:
-        st.info("No MDK assignments in history yet.")
-        # Debug: Check if data is being inserted
-        st.write("Debug: Assignments fetched:", assignments)
-
-# Historical Schedules Upload (last 8 weeks)
-current_week = date.today().isocalendar()[1]
-with st.expander("Historical Schedules (Last 8 Weeks)"):
-    bucket_files = supabase.storage.from_("schedules").list()
-    file_names = [f['name'] for f in bucket_files] if bucket_files else []
-
-    for i in range(1, 9):
-        week = current_week - i
-        file_name = f"week_{week}.xlsx"
-        st.write(f"Week {week}")
-        status = "uploaded" if file_name in file_names else "not uploaded"
-        st.write(f"Current file: {status}")
-        uploader = st.file_uploader(f"Upload/replace schedule for week {week}", type="xlsx", key=f"hist_{week}")
-        if uploader:
-            # Upload the file content as bytes with upsert as string
-            file_content = uploader.getvalue()  # Get bytes directly
-            supabase.storage.from_("schedules").upload(file_name, file_content, {"upsert": "true"})
-            st.success(f"Uploaded {file_name}")
-
-            # Add a short delay to ensure the upload is reflected
-            time.sleep(1)  # Wait 1 second for Supabase to sync
-
-            # Parse and update mdk_assignments
-            downloaded = supabase.storage.from_("schedules").download(file_name)
-            if downloaded:
-                wb = openpyxl.load_workbook(io.BytesIO(downloaded))
-                # Use the first sheet if "Blad1" is not found
-                sheet = wb["Blad1"] if "Blad1" in wb.sheetnames else wb.active
-                st.write("Debug: Using sheet:", sheet.title)  # Debug sheet name
-                mdk_cols = {'Monday': 'D', 'Tuesday': 'H', 'Thursday': 'P'}
-                st.write("Debug: Parsing MDK assignments for week", week)  # Debug log
-                parsed_days = 0
-                for day, col in mdk_cols.items():
-                    cell_value = sheet.cell(row=3, column=openpyxl.utils.column_index_from_string(col)).value
-                    st.write(f"Debug: {day} MDK value: {cell_value}")  # Debug parsed value
-                    if cell_value and isinstance(cell_value, str) and cell_value.strip() in pre_pop_employees:
-                        try:
-                            supabase.table("mdk_assignments").upsert({"week": week, "day": day, "employee": cell_value.strip()}).execute()
-                            st.success(f"Inserted MDK assignment: {week}, {day}, {cell_value}")
-                            parsed_days += 1
-                        except Exception as e:
-                            st.error(f"Failed to upsert {day} MDK assignment: {e}")
-                    else:
-                        st.warning(f"Skipping invalid MDK value for {day}: {cell_value}")
-                st.success(f"Parsed and updated MDK assignments for week {week}. {parsed_days} days added.")
 
 # Button to generate schedule
 if st.button("Generate Schedule"):
+    # ... (The rest of your schedule generation code remains unchanged)
     mdk_days = ['Monday', 'Tuesday', 'Thursday']
     mdk_assignments = {}
 
@@ -176,8 +162,8 @@ if st.button("Generate Schedule"):
 
         scores = {}
         for emp in avail_for_day:
-            response = supabase.table("mdk_assignments").select("count", count="exact").eq("employee", emp).execute()
-            history_count = response.data[0]['count'] if response.data and response.data[0]['count'] else 0
+            response = supabase.table("mdk_assignments").select("week", count="exact").eq("employee", emp).execute()
+            history_count = response.count if response.count is not None else 0
             rate = work_rates.get(emp, 1.0)
             this_week_penalty = assigned_this_week[emp] * 10
             scores[emp] = (history_count / rate) + this_week_penalty if rate > 0 else float('inf')
@@ -263,20 +249,21 @@ if st.button("Generate Schedule"):
             sheet[f"{lunchvakt_col['Wednesday']}3"] = lunchvakt
 
     # Save new MDK assignments to Supabase
-    for day in mdk_assignments:
-        supabase.table("mdk_assignments").upsert({"week": current_week, "day": day, "employee": mdk_assignments[day]}).execute()
+    for day, emp in mdk_assignments.items():
+        supabase.table("mdk_assignments").upsert({"week": current_week, "day": day, "employee": emp}).execute()
 
     # Save the new schedule
-    output_file = 'generated_schedule.xlsx'
+    output_file = io.BytesIO()
     wb.save(output_file)
+    output_file.seek(0)
+
 
     # Provide download
-    with open(output_file, 'rb') as f:
-        st.download_button(
-            "Download Generated Schedule",
-            data=f,
-            file_name=f"schedule_v{current_week}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    st.download_button(
+        "Download Generated Schedule",
+        data=output_file,
+        file_name=f"schedule_v{current_week}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
     st.success("Schedule generated successfully!")
