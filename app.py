@@ -6,42 +6,6 @@ import io
 from supabase import create_client, Client
 import plotly.express as px
 import time
-import base64  # Required for the automatic download
-
-# --- AUTO-DOWNLOAD HELPER FUNCTION (IMPROVED FROM FLASK PRINCIPLE) ---
-def trigger_auto_download(file_bytes, filename):
-    """
-    Generates a hidden link and clicks it to trigger a download, with a small delay for robustness.
-    Inspired by Flask's send_file, but adapted for Streamlit's client-side rendering.
-    """
-    b64 = base64.b64encode(file_bytes).decode()
-    href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{filename}" id="auto_download_link" style="display: none;">Download</a>'
-    
-    # Note the escaped curly braces {{ and }} for the f-string
-    js = f"""
-    <script>
-        // Wait for the document to be ready
-        document.addEventListener('DOMContentLoaded', function() {{
-            setTimeout(function() {{
-                const link = document.getElementById('auto_download_link');
-                if (link) {{
-                    link.click();
-                    link.remove();
-                    console.log("Auto-download triggered");
-                }} else {{
-                    console.log("Auto-download link not found");
-                }}
-            }}, 500); // Increased delay to 500ms
-        }});
-    </script>
-    """
-    st.markdown(href + js, unsafe_allow_html=True)
-
-# --- SWEDISH TRANSLATION SETUP ---
-days_sv = {
-    'Monday': 'Måndag', 'Tuesday': 'Tisdag', 'Wednesday': 'Onsdag', 
-    'Thursday': 'Torsdag', 'Friday': 'Fredag'
-}
 
 # Initialize Supabase client using Streamlit secrets
 supabase_url = st.secrets["SUPABASE_URL"]
@@ -182,6 +146,11 @@ with st.expander("Arbetstid per medarbetare (justera vid behov)"):
 
 work_rates = st.session_state['work_rates']
 
+days_sv = {
+    'Monday': 'Måndag', 'Tuesday': 'Tisdag', 'Wednesday': 'Onsdag', 
+    'Thursday': 'Torsdag', 'Friday': 'Fredag'
+}
+
 # Button to generate schedule
 if st.button("Generera Schema"):
     with st.spinner("Genererar schema, vänligen vänta..."):
@@ -228,18 +197,20 @@ if st.button("Generera Schema"):
             
             # Simplified logic for who is available for labs
             lab_candidates = avail_day[:]
-            if mdk in lab_candidates and day in ['Tuesday', 'Thursday']: # Full-day MDK
+            if mdk in lab_candidates and day in ['Tuesday', 'Thursday']:  # Full-day MDK
                 lab_candidates.remove(mdk)
 
             # Morning assignment
             morning_candidates = lab_candidates[:]
-            if mdk in morning_candidates and day in ['Monday']: # Half-day MDK
-                 morning_candidates.remove(mdk)
+            if mdk in morning_candidates and day in ['Monday']:  # Half-day MDK
+                morning_candidates.remove(mdk)
 
             lab_people_morning = random.sample(morning_candidates, k=min(len(morning_candidates), 4))
             random.shuffle(labs)
             morning_assign = dict(zip(lab_people_morning, labs))
             morning_remainder = [emp for emp in avail_day if emp not in lab_people_morning]
+            # Track morning Screen/MR assignments
+            morning_screen_mr = morning_remainder[:]
 
             sheet[f"{screen_cols[day]}3"] = '/'.join(sorted([emp for emp in morning_remainder if (emp != mdk or day not in mdk_days)]))
             klin_col = klin_cols[day]
@@ -250,11 +221,40 @@ if st.button("Generera Schema"):
             # Afternoon assignment (not Friday)
             if day != 'Friday':
                 afternoon_candidates = lab_candidates[:]
-                lab_people_afternoon = random.sample(afternoon_candidates, k=min(len(afternoon_candidates), 4))
-                
+                # Remove MDK if present for full-day MDK days
+                if mdk in afternoon_candidates and day in ['Tuesday', 'Thursday']:
+                    afternoon_candidates.remove(mdk)
+
+                # Prioritize variety: LAB for morning Screen/MR, Screen/MR for morning LAB
+                lab_people_afternoon = []
+                screen_mr_afternoon = []
+                available_for_afternoon = afternoon_candidates[:]
+
+                # Assign LAB roles first, preferring those on Screen/MR in the morning
+                lab_slots = min(4, len(available_for_afternoon))
+                lab_candidates_afternoon = [emp for emp in available_for_afternoon if emp in morning_screen_mr] or available_for_afternoon
+                if len(lab_candidates_afternoon) >= lab_slots:
+                    lab_people_afternoon = random.sample(lab_candidates_afternoon, lab_slots)
+                else:
+                    lab_people_afternoon = lab_candidates_afternoon[:]
+                    remaining_slots = lab_slots - len(lab_people_afternoon)
+                    if remaining_slots > 0:
+                        other_candidates = [emp for emp in available_for_afternoon if emp not in lab_people_afternoon]
+                        lab_people_afternoon.extend(random.sample(other_candidates, min(remaining_slots, len(other_candidates))))
+
+                # Assign Screen/MR roles, preferring those on LAB in the morning
+                screen_mr_candidates = [emp for emp in available_for_afternoon if emp not in lab_people_afternoon]
+                if morning_assign:
+                    morning_lab_employees = [emp for emp in morning_assign.keys() if emp in screen_mr_candidates]
+                    if morning_lab_employees:
+                        screen_mr_afternoon.extend(random.sample(morning_lab_employees, min(1, len(morning_lab_employees))))
+                        screen_mr_candidates = [emp for emp in screen_mr_candidates if emp not in screen_mr_afternoon]
+                if len(screen_mr_afternoon) < 1 and screen_mr_candidates:
+                    screen_mr_afternoon.append(random.choice(screen_mr_candidates))
+
                 afternoon_labs = labs[:]
                 # Simple derangement attempt
-                for _ in range(10): # Try to shuffle to avoid same lab
+                for _ in range(10):  # Try to shuffle to avoid same lab
                     random.shuffle(afternoon_labs)
                     afternoon_assign = dict(zip(lab_people_afternoon, afternoon_labs))
                     if all(afternoon_assign.get(p) != morning_assign.get(p) for p in afternoon_assign if p in morning_assign):
@@ -263,7 +263,9 @@ if st.button("Generera Schema"):
                 for p, l in afternoon_assign.items():
                     sheet[f"{klin_col}{lab_rows['afternoon1'][l]}"] = p
 
-                afternoon_remainder = [emp for emp in avail_day if emp not in lab_people_afternoon]
+                afternoon_remainder = [emp for emp in avail_day if emp not in lab_people_afternoon and emp not in screen_mr_afternoon]
+                if day in ['Monday'] and mdk and mdk not in afternoon_remainder:
+                    afternoon_remainder.append(mdk)
                 sheet[f"{screen_cols[day]}14"] = '/'.join(sorted(afternoon_remainder))
 
             # MDK and Lunch Guard assignment
@@ -280,17 +282,14 @@ if st.button("Generera Schema"):
         output_file = io.BytesIO()
         wb.save(output_file)
         
-        st.success("Schemat har genererats! Nedladdning startar...")
-        # --- TRIGGER AUTO-DOWNLOAD ---
-        trigger_auto_download(output_file.getvalue(), f"schema_v{current_week}.xlsx")
-
-        # --- MANUAL DOWNLOAD FALLBACK ---
+        st.success("Schemat har genererats!")
+        # --- MANUAL DOWNLOAD ---
         output_file.seek(0)
         st.download_button(
-            label="Ladda ner schemat manuellt",
+            label="Ladda ner schemat",
             data=output_file,
             file_name=f"schema_v{current_week}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        st.success("Schemat har genererats framgångsrikt!")  # Swedish translation
+        st.success("Schemat har genererats framgångsrikt!")
