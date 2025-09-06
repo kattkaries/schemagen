@@ -7,20 +7,25 @@ from supabase import create_client, Client
 import plotly.express as px
 import time
 
-# --- CSS FÖR ATT STYLA EN SPECIFIK MULTISELECT (MEST ROBUSTA VERSIONEN) ---
+# --- CSS FÖR ATT STYLA MULTISELECT ---
 st.markdown("""
 <style>
-    /* Hitta vår markör, välj nästa div (som är en osynlig wrapper), 
-    och hitta sedan multiselect-widgeten inuti den.
-    */
-    #marker_for_green_multiselect + div div[data-testid="stMultiSelect"] [data-baseweb="tag"] {
-        background-color: #2E8B57 !important; /* SeaGreen med !important för att tvinga igenom stilen */
-        border-radius: 0.5rem;
+    /* Hitta containern för den första multiselect-widgeten på sidan */
+    div[data-testid="stMultiSelect"]:first-of-type {
+        /* Denna selektor används bara för att avgränsa, ingen stil behövs här */
     }
 
-    /* Styla texten och krysset inuti */
-    #marker_for_green_multiselect + div div[data-testid="stMultiSelect"] [data-baseweb="tag"] span,
-    #marker_for_green_multiselect + div div[data-testid="stMultiSelect"] [data-baseweb="tag"] span[role="button"] {
+    /* Inom den första multiselect, hitta alla valda "tags" */
+    div[data-testid="stMultiSelect"]:first-of-type [data-baseweb="tag"] {
+        background-color: #2E8B57; /* En fin havsgrön färg (SeaGreen) */
+        border-radius: 0.5rem;    /* Valfritt: gör dem lite rundare */
+    }
+
+    /* Bonus: Gör texten och krysset i tagen vita för bättre kontrast */
+    div[data-testid="stMultiSelect"]:first-of-type [data-baseweb="tag"] span {
+        color: white !important;
+    }
+    div[data-testid="stMultiSelect"]:first-of-type [data-baseweb="tag"] span[role="button"] {
         color: white !important;
     }
 </style>
@@ -49,8 +54,6 @@ pre_unavailable = {
 
 st.title("Schemagenerator för världens bästa enhet!")
 
-# Ny metod med en markör
-st.markdown('<div id="marker_for_green_multiselect"></div>', unsafe_allow_html=True)
 available_week = st.multiselect(
     "Initialer för samtliga medarbetare",
     options=pre_pop_employees,
