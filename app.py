@@ -322,7 +322,7 @@ if st.button("Generera Schema"):
             if mdk:
                 sheet[f"{mdk_cols[day]}3"] = mdk
             elif day == 'Wednesday' and avail_day:
-                sheet[f"{lunchvakt_col['Wednesday']}3"] = random.choice(avail_ay)
+                sheet[f"{lunchvakt_col['Wednesday']}3"] = random.choice(avail_day)
 
         # Save new MDK assignments to Supabase
         for day, emp in mdk_assignments.items():
