@@ -124,10 +124,18 @@ with st.expander("Historical Schedules (Last 8 Weeks)"):
                 wb = openpyxl.load_workbook(io.BytesIO(downloaded))
                 sheet = wb['Blad1']
                 mdk_cols = {'Monday': 'D', 'Tuesday': 'H', 'Thursday': 'P'}
+                st.write("Debug: Parsing MDK assignments for week", week)  # Debug log
                 for day, col in mdk_cols.items():
                     emp = sheet[f"{col}3"].value
-                    if emp:
-                        supabase.table("mdk_assignments").upsert({"week": week, "day": day, "employee": emp}).execute()
+                    st.write(f"Debug: {day} MDK value: {emp}")  # Debug parsed value
+                    if emp and isinstance(emp, str) and emp.strip() in pre_pop_employees:
+                        try:
+                            supabase.table("mdk_assignments").upsert({"week": week, "day": day, "employee": emp.strip()}).execute()
+                            st.success(f"Inserted MDK assignment: {week}, {day}, {emp}")
+                        except Exception as e:
+                            st.error(f"Failed to upsert {day} MDK assignment: {e}")
+                    else:
+                        st.warning(f"Skipping invalid MDK value for {day}: {emp}")
                 st.success(f"Parsed and updated MDK assignments for week {week}")
 
 # Button to generate schedule
