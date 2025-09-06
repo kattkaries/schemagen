@@ -25,10 +25,10 @@ pre_unavailable = {
     'Tuesday': ['LAO', 'CB'],
     'Wednesday': ['DS', 'AH', 'CB'],
     'Thursday': ['CB'],
-    'Friday': ['CB']
+    'Friday': ['CB', 'AL']
 }
 
-st.title("Veckoschema Generator för Mammografienheten")
+st.title("Schemagenerator för världens bästa enhet!")
 
 # Input for available employees this week
 available_week = st.multiselect(
@@ -292,5 +292,3 @@ if st.button("Generera Schema"):
             file_name=f"schema_v{current_week}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
-        st.success("Schemat har genererats framgångsrikt!")
