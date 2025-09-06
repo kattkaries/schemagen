@@ -35,19 +35,19 @@ available_week = st.multiselect(
     "Initialer för samtliga medarbetare",
     options=pre_pop_employees,
     default=pre_pop_employees,
-    key="available_employees_multiselect"  # Unique key for CSS targeting
+    key="available_employees_multiselect"  # Unique key for potential future targeting
 )
 
 # Inject custom CSS to change selected item color to green
 st.markdown(
     """
     <style>
-    [data-testid="stMultiSelect-available_employees_multiselect"] .stMultiSelect div[role="option"][aria-selected="true"] {
-        background-color: #4CAF50 !important; /* Green color */
-        color: white !important; /* White text for contrast */
+    .stMultiSelect [role="option"][aria-selected="true"] {
+        background-color: #4CAF50 !important; /* Green */
+        color: white !important; /* White text */
     }
-    [data-testid="stMultiSelect-available_employees_multiselect"] .stMultiSelect div[role="option"][aria-selected="true"]:hover {
-        background-color: #45a049 !important; /* Slightly darker green on hover */
+    .stMultiSelect [role="option"][aria-selected="true"]:hover {
+        background-color: #45a049 !important; /* Darker green on hover */
     }
     </style>
     """,
