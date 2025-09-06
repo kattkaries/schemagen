@@ -6,13 +6,6 @@ import io
 from supabase import create_client, Client
 import plotly.express as px
 
-try:
-    from streamlit_kanban_board import kanban_board
-    KANBAN_AVAILABLE = True
-except ImportError:
-    KANBAN_AVAILABLE = False
-    st.warning("Kanban board component not available. Using multiselect instead.")
-
 # Initialize Supabase client using Streamlit secrets
 supabase_url = st.secrets["SUPABASE_URL"]
 supabase_key = st.secrets["SUPABASE_KEY"]
@@ -46,57 +39,16 @@ unavailable_whole_week = st.multiselect(
 
 available_employees = [emp for emp in available_week if emp not in unavailable_whole_week]
 
-# Drag-and-drop or multiselect for unavailable per day
+# Multiselect for unavailable per day
 days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-if KANBAN_AVAILABLE:
-    with st.expander("Assign Unavailable Employees per Day (Drag-and-Drop)"):
-        st.write("Drag employees from 'Available' to 'Unavailable [Day]' columns.")
-
-        stages = [
-            {"id": "available", "name": "Available", "color": "#27ae60"},
-        ] + [
-            {"id": day.lower(), "name": f"Unavailable {day}", "color": "#e74c3c"} for day in days
-        ]
-
-        initial_kanban_data = [{"id": emp, "stage": "available", "company_name": emp} for emp in available_employees]
-
-        # Apply pre-unavailable defaults
-        for day, emps in pre_unavailable.items():
-            for emp in emps:
-                if emp in available_employees:
-                    for item in initial_kanban_data:
-                        if item["id"] == emp:
-                            item["stage"] = day.lower()
-                            break
-
-        # Load or initialize kanban data in session state
-        if 'kanban_data' not in st.session_state or len(st.session_state['kanban_data']) != len(available_employees):
-            st.session_state['kanban_data'] = initial_kanban_data
-
-        result = kanban_board(
-            board=stages,
-            data=st.session_state['kanban_data'],
-            key="unavailable_board"
+with st.expander("Assign Unavailable Employees per Day"):
+    unavailable_per_day = {}
+    for day in days:
+        unavailable_per_day[day] = st.multiselect(
+            f"Initials of employees unavailable on {day}",
+            options=available_employees,
+            default=pre_unavailable.get(day, [])
         )
-
-        if result and result.get("type") == "card_move":
-            for item in st.session_state['kanban_data']:
-                if item["id"] == result["data"]["id"]:
-                    item["stage"] = result["stage"]
-                    break
-            st.rerun()  # Rerun to reflect changes
-
-        # Extract unavailable_per_day from kanban data
-        unavailable_per_day = {day: [item["id"] for item in st.session_state['kanban_data'] if item["stage"] == day.lower()] for day in days}
-else:
-    with st.expander("Assign Unavailable Employees per Day"):
-        unavailable_per_day = {}
-        for day in days:
-            unavailable_per_day[day] = st.multiselect(
-                f"Initials of employees unavailable on {day}",
-                options=available_employees,
-                default=pre_unavailable.get(day, [])
-            )
 
 # Load work rates from Supabase (fallback to defaults)
 default_work_rates = {emp: 1.0 for emp in pre_pop_employees}
@@ -140,7 +92,6 @@ with st.expander("MDK Assignments Overview (Bar Graph)"):
 # Historical Schedules Upload (last 8 weeks)
 current_week = date.today().isocalendar()[1]
 with st.expander("Historical Schedules (Last 8 Weeks)"):
-    # List files in bucket to check existence
     bucket_files = supabase.storage.from_("schedules").list()
     file_names = [f['name'] for f in bucket_files] if bucket_files else []
 
@@ -152,16 +103,14 @@ with st.expander("Historical Schedules (Last 8 Weeks)"):
         st.write(f"Current file: {status}")
         uploader = st.file_uploader(f"Upload/replace schedule for week {week}", type="xlsx", key=f"hist_{week}")
         if uploader:
-            # Upload to Supabase Storage
             supabase.storage.from_("schedules").upload(file_name, uploader, {"upsert": True})
             st.success(f"Uploaded {file_name}")
 
-            # Parse and update mdk_assignments
             downloaded = supabase.storage.from_("schedules").download(file_name)
             if downloaded:
                 wb = openpyxl.load_workbook(io.BytesIO(downloaded))
                 sheet = wb['Blad1']
-                mdk_cols = {'Monday': 'D', 'Tuesday': 'H', 'Thursday': 'P'}  # Exclude Wednesday
+                mdk_cols = {'Monday': 'D', 'Tuesday': 'H', 'Thursday': 'P'}
                 for day, col in mdk_cols.items():
                     emp = sheet[f"{col}3"].value
                     if emp:
@@ -170,24 +119,18 @@ with st.expander("Historical Schedules (Last 8 Weeks)"):
 
 # Button to generate schedule
 if st.button("Generate Schedule"):
-    # MDK days (excluding Wednesday)
     mdk_days = ['Monday', 'Tuesday', 'Thursday']
     mdk_assignments = {}
 
-    # Assign MDK with priorities (using Supabase history)
     assigned_this_week = {emp: 0 for emp in available_employees}
     for day in mdk_days:
-        avail_for_day = [
-            emp for emp in available_employees
-            if emp not in unavailable_per_day[day] and work_rates.get(emp, 0) > 0
-        ]
+        avail_for_day = [emp for emp in available_employees if emp not in unavailable_per_day[day] and work_rates.get(emp, 0) > 0]
         if not avail_for_day:
             st.warning(f"No available employees for MDK/lunch on {day}")
             continue
 
         scores = {}
         for emp in avail_for_day:
-            # Query historical MDK count from Supabase
             response = supabase.table("mdk_assignments").select("count", count="exact").eq("employee", emp).execute()
             history_count = response.data[0]['count'] if response.data and response.data[0]['count'] else 0
             rate = work_rates.get(emp, 1.0)
@@ -198,7 +141,6 @@ if st.button("Generate Schedule"):
         mdk_assignments[day] = chosen
         assigned_this_week[chosen] += 1
 
-    # Generate the schedule
     wb = openpyxl.load_workbook('template.xlsx')
     sheet = wb['Blad1']
 
