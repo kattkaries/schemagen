@@ -313,6 +313,6 @@ if st.button("Generera Schema"):
         st.download_button(
             label="Ladda ner schemat",
             data=output_file,
-            file_name=f"schema_v{current_week}.xlsx",
+            file_name=f"veckoschema_v{current_week}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
