@@ -1,108 +1,3 @@
-Of course\! That's an excellent idea. Using a 0-100 percentage scale is definitely more intuitive for users.
-
-To answer your main question: **yes, this change is absolutely possible, and the MDK assignment logic will still work perfectly with a small adjustment to the UI.**
-
-### Why the Logic Still Works
-
-The core of your MDK assignment logic is this line:
-`scores[emp] = (history_count / rate) + this_week_penalty`
-
-The goal is to give a higher score (making them less likely to be chosen) to employees with a lower work rate. Let's look at the math:
-
-  * **Old System (Decimals):**
-
-      * Employee A (100% time): `rate = 1.0`. Score is based on `history_count / 1.0`.
-      * Employee B (50% time): `rate = 0.5`. Score is based on `history_count / 0.5`, which is **2x** Employee A's score.
-
-  * **New System (Percentages):**
-
-      * Employee A (100% time): `rate = 100`. Score is based on `history_count / 100`.
-      * Employee B (50% time): `rate = 50`. Score is based on `history_count / 50`, which is **2x** Employee A's score.
-
-As you can see, the **ratio** between the scores remains identical. The logic that picks the employee with the minimum score still works perfectly without any changes to the formula itself.
-
-### How to Implement the Change
-
-Here are the changes you'll need to make. It mainly involves updating the default value and the `st.number_input` widget.
-
-**1. Change the Default Value**
-
-First, update the `default_work_rates` dictionary to use percentages.
-
-**Change this:**
-
-```python
-default_work_rates = {emp: 1.0 for emp in pre_pop_employees}
-```
-
-**To this:**
-
-```python
-default_work_rates = {emp: 100 for emp in pre_pop_employees}
-```
-
-**2. Update the UI Input Widget**
-
-Next, update the `st.number_input` inside the "Employee work rates" expander to work with percentages. We'll also change it to use integers, which is cleaner for percentages.
-
-**Replace this entire block:**
-
-```python
-# OLD BLOCK
-with st.expander("Employee work rates (adjust as needed)"):
-    for emp in pre_pop_employees:
-        st.session_state['work_rates'][emp] = st.number_input(
-            f"{emp} work rate (0.0 to 1.0)",
-            min_value=0.0,
-            max_value=1.0,
-            value=float(st.session_state['work_rates'][emp]),
-            step=0.05,
-            key=f"rate_{emp}" # Added key for stability
-        )
-    # ... (button code) ...
-```
-
-**With this new block:**
-
-```python
-# NEW BLOCK
-with st.expander("Employee work rates (adjust as needed)"):
-    for emp in pre_pop_employees:
-        # The key for st.number_input should be unique for each widget
-        key = f"rate_{emp}"
-        # Ensure the value from session state is an integer for the widget
-        value_from_state = int(st.session_state['work_rates'].get(emp, 100))
-
-        st.session_state['work_rates'][emp] = st.number_input(
-            f"{emp} work rate (0 to 100%)",
-            min_value=0,
-            max_value=100,
-            value=value_from_state,
-            step=5,  # A step of 5% is sensible
-            key=key
-        )
-    
-    if st.button("Save Work Rates to Database"):
-        # ... (The save logic remains exactly the same)
-```
-
-### Important: One-Time Data Migration
-
-Your database currently has the rates stored as decimals (e.g., `1.0`, `0.8`). After you deploy the new code, you'll need to update these values once.
-
-1.  Run the updated app. The work rates will likely show up as `1`, `0`, etc.
-2.  Go through the list and manually set them to their correct percentage values (e.g., `100`, `80`).
-3.  Click **"Save Work Rates to Database"**.
-
-This will overwrite the old decimal values with the new percentage integers. From that point on, everything will be perfectly in sync.
-
------
-
-### Full, Updated Code
-
-For your convenience, here is the complete `app.py` with these changes integrated.
-
-```python
 import streamlit as st
 import openpyxl
 import random
@@ -210,7 +105,7 @@ with st.expander("Historical Schedules (Last 8 Weeks)"):
                 st.success(f"Parsed and updated MDK assignments for week {week}. {parsed_days} days added.")
 
 
-# CHANGE 1: Use percentages (0-100) for work rates
+# Use percentages (0-100) for work rates
 default_work_rates = {emp: 100 for emp in pre_pop_employees}
 response = supabase.table("work_rates").select("*").execute()
 db_work_rates = {row['employee']: row['rate'] for row in response.data} if response.data else {}
@@ -226,7 +121,6 @@ with st.expander("Employee work rates (adjust as needed)"):
         # Ensure the value from session state is an integer for the widget
         value_from_state = int(st.session_state['work_rates'].get(emp, 100))
 
-        # CHANGE 2: Update number_input to use percentage scale
         st.session_state['work_rates'][emp] = st.number_input(
             f"{emp} work rate (0 to 100%)",
             min_value=0,
@@ -269,7 +163,6 @@ if st.button("Generate Schedule"):
         for emp in avail_for_day:
             response = supabase.table("mdk_assignments").select("week", count="exact").eq("employee", emp).execute()
             history_count = response.count if response.count is not None else 0
-            # NOTE: The logic here works perfectly with percentages (e.g., 100, 80, 50)
             rate = work_rates.get(emp, 100)
             this_week_penalty = assigned_this_week[emp] * 10
             scores[emp] = (history_count / rate) + this_week_penalty if rate > 0 else float('inf')
@@ -372,4 +265,3 @@ if st.button("Generate Schedule"):
     )
 
     st.success("Schedule generated successfully!")
-```
