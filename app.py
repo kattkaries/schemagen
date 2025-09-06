@@ -69,7 +69,7 @@ with st.expander("Employee work rates (adjust as needed)"):
             f"{emp} work rate (0.0 to 1.0)",
             min_value=0.0,
             max_value=1.0,
-            value=st.session_state['work_rates'][emp],
+            value=float(st.session_state['work_rates'][emp]),
             step=0.05
         )
 # NEW CODE
