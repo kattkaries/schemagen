@@ -122,20 +122,22 @@ with st.expander("Historical Schedules (Last 8 Weeks)"):
             downloaded = supabase.storage.from_("schedules").download(file_name)
             if downloaded:
                 wb = openpyxl.load_workbook(io.BytesIO(downloaded))
-                sheet = wb['Blad1']
+                # Use the first sheet if "Blad1" is not found
+                sheet = wb["Blad1"] if "Blad1" in wb.sheetnames else wb.sheetnames[0]
+                st.write("Debug: Using sheet:", sheet.title)  # Debug sheet name
                 mdk_cols = {'Monday': 'D', 'Tuesday': 'H', 'Thursday': 'P'}
                 st.write("Debug: Parsing MDK assignments for week", week)  # Debug log
                 for day, col in mdk_cols.items():
-                    emp = sheet[f"{col}3"].value
-                    st.write(f"Debug: {day} MDK value: {emp}")  # Debug parsed value
-                    if emp and isinstance(emp, str) and emp.strip() in pre_pop_employees:
+                    cell_value = sheet.cell(row=3, column=openpyxl.utils.column_index_from_string(col)).value
+                    st.write(f"Debug: {day} MDK value: {cell_value}")  # Debug parsed value
+                    if cell_value and isinstance(cell_value, str) and cell_value.strip() in pre_pop_employees:
                         try:
-                            supabase.table("mdk_assignments").upsert({"week": week, "day": day, "employee": emp.strip()}).execute()
-                            st.success(f"Inserted MDK assignment: {week}, {day}, {emp}")
+                            supabase.table("mdk_assignments").upsert({"week": week, "day": day, "employee": cell_value.strip()}).execute()
+                            st.success(f"Inserted MDK assignment: {week}, {day}, {cell_value}")
                         except Exception as e:
                             st.error(f"Failed to upsert {day} MDK assignment: {e}")
                     else:
-                        st.warning(f"Skipping invalid MDK value for {day}: {emp}")
+                        st.warning(f"Skipping invalid MDK value for {day}: {cell_value}")
                 st.success(f"Parsed and updated MDK assignments for week {week}")
 
 # Button to generate schedule
