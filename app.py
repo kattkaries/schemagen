@@ -109,9 +109,11 @@ with st.expander("Historical Schedules (Last 8 Weeks)"):
         st.write(f"Current file: {status}")
         uploader = st.file_uploader(f"Upload/replace schedule for week {week}", type="xlsx", key=f"hist_{week}")
         if uploader:
-            supabase.storage.from_("schedules").upload(file_name, uploader, {"upsert": True})
+            # Upload bytes to Supabase Storage
+            supabase.storage.from_("schedules").upload(file_name, uploader.read(), {"upsert": True})
             st.success(f"Uploaded {file_name}")
 
+            # Parse and update mdk_assignments
             downloaded = supabase.storage.from_("schedules").download(file_name)
             if downloaded:
                 wb = openpyxl.load_workbook(io.BytesIO(downloaded))
