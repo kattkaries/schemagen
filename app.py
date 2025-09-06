@@ -7,25 +7,20 @@ from supabase import create_client, Client
 import plotly.express as px
 import time
 
-# --- CSS FÖR ATT STYLA MULTISELECT ---
+# --- CSS FÖR ATT STYLA EN SPECIFIK MULTISELECT ---
 st.markdown("""
 <style>
-    /* Hitta containern för den första multiselect-widgeten på sidan */
-    div[data-testid="stMultiSelect"]:first-of-type {
-        /* Denna selektor används bara för att avgränsa, ingen stil behövs här */
-    }
-
-    /* Inom den första multiselect, hitta alla valda "tags" */
-    div[data-testid="stMultiSelect"]:first-of-type [data-baseweb="tag"] {
-        background-color: #2E8B57; /* En fin havsgrön färg (SeaGreen) */
-        border-radius: 0.5rem;    /* Valfritt: gör dem lite rundare */
+    /* Inom den unika div-containern med id="green_multiselect", hitta alla valda "tags" */
+    #green_multiselect [data-baseweb="tag"] {
+        background-color: #2E8B57; /* SeaGreen */
+        border-radius: 0.5rem;
     }
 
     /* Bonus: Gör texten och krysset i tagen vita för bättre kontrast */
-    div[data-testid="stMultiSelect"]:first-of-type [data-baseweb="tag"] span {
+    #green_multiselect [data-baseweb="tag"] span {
         color: white !important;
     }
-    div[data-testid="stMultiSelect"]:first-of-type [data-baseweb="tag"] span[role="button"] {
+    #green_multiselect [data-baseweb="tag"] span[role="button"] {
         color: white !important;
     }
 </style>
@@ -54,12 +49,13 @@ pre_unavailable = {
 
 st.title("Schemagenerator för världens bästa enhet!")
 
-# Input for available employees this week
+st.markdown('<div id="green_multiselect">', unsafe_allow_html=True)
 available_week = st.multiselect(
     "Initialer för samtliga medarbetare",
     options=pre_pop_employees,
     default=pre_pop_employees
 )
+st.markdown('</div>', unsafe_allow_html=True)
 
 # Input for unavailable whole week
 unavailable_whole_week = st.multiselect(
