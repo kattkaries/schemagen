@@ -243,7 +243,7 @@ if st.button("Generera Schema"):
                         other_candidates = [emp for emp in available_for_afternoon if emp not in lab_people_afternoon]
                         lab_people_afternoon.extend(random.sample(other_candidates, min(remaining_slots, len(other_candidates))))
 
-                # Assign Screen/MR roles, preferring those on LAB in the morning
+                # Assign Screen/MR roles, preferring those on LAB in the morning, excluding LAB assignees
                 screen_mr_candidates = [emp for emp in available_for_afternoon if emp not in lab_people_afternoon]
                 if morning_assign:
                     morning_lab_employees = [emp for emp in morning_assign.keys() if emp in screen_mr_candidates]
@@ -264,6 +264,7 @@ if st.button("Generera Schema"):
                 for p, l in afternoon_assign.items():
                     sheet[f"{klin_col}{lab_rows['afternoon1'][l]}"] = p
 
+                # Recalculate afternoon_remainder excluding all assigned employees
                 afternoon_remainder = [emp for emp in avail_day if emp not in lab_people_afternoon and emp not in screen_mr_afternoon]
                 if day in ['Monday'] and mdk and mdk not in afternoon_remainder:
                     afternoon_remainder.append(mdk)
