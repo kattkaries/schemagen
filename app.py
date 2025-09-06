@@ -109,9 +109,9 @@ with st.expander("Historical Schedules (Last 8 Weeks)"):
         st.write(f"Current file: {status}")
         uploader = st.file_uploader(f"Upload/replace schedule for week {week}", type="xlsx", key=f"hist_{week}")
         if uploader:
-            # Upload the file content as bytes
+            # Upload the file content as bytes without explicit file_options
             file_content = uploader.getvalue()  # Get bytes directly
-            supabase.storage.from_("schedules").upload(file_name, file_content, {"upsert": True})
+            supabase.storage.from_("schedules").upload(file_name, file_content)
             st.success(f"Uploaded {file_name}")
 
             # Parse and update mdk_assignments
