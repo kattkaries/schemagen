@@ -32,7 +32,7 @@ st.title("Schemagenerator för världens bästa enhet!")
 
 # Input for available employees this week
 available_week = st.multiselect(
-    "Initialer för tillgängliga medarbetare denna vecka",
+    "Initialer för samtliga medarbetare",
     options=pre_pop_employees,
     default=pre_pop_employees
 )
@@ -59,7 +59,7 @@ with st.expander("Ange otillgänglighet per dag", expanded=True):
         )
 
 # MDK Overview Bar Graph
-with st.expander("Översikt MDK-uppdrag (Stapeldiagram)"):
+with st.expander("MDK-fördelning de senaste månaderna (stapeldiagram)"):
     response = supabase.table("mdk_assignments").select("employee").execute()
     assignments = response.data if response.data else []
     mdk_counts = {}
@@ -71,8 +71,8 @@ with st.expander("Översikt MDK-uppdrag (Stapeldiagram)"):
         employees = list(mdk_counts.keys())
         counts = list(mdk_counts.values())
         fig = px.bar(x=employees, y=counts, 
-                     labels={'x': 'Medarbetare', 'y': 'Antal MDK-uppdrag'}, 
-                     title="Antal MDK-uppdrag per medarbetare")
+                     labels={'x': 'Medarbetare', 'y': 'Antal MDK'}, 
+                     title="MDK-fördelning de senaste 2 månaderna")
         st.plotly_chart(fig)
     else:
         st.info("Inga MDK-uppdrag i historiken ännu.")
