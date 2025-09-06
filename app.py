@@ -72,11 +72,27 @@ with st.expander("Employee work rates (adjust as needed)"):
             value=st.session_state['work_rates'][emp],
             step=0.05
         )
-    if st.button("Save Work Rates to Database"):
-        for emp in pre_pop_employees:
-            rate = st.session_state['work_rates'][emp]
-            supabase.table("work_rates").upsert({"employee": emp, "rate": rate}).execute()
-        st.success("Work rates saved!")
+# NEW CODE
+if st.button("Save Work Rates to Database"):
+    try:
+        # 1. Prepare a list of all records to be saved
+        records_to_save = [
+            {"employee": emp, "rate": st.session_state['work_rates'][emp]}
+            for emp in pre_pop_employees
+        ]
+
+        # 2. Upsert the entire list in one single, efficient command
+        supabase.table("work_rates").upsert(records_to_save).execute()
+
+        st.success("Work rates saved successfully!")
+        
+        # Optional: Add a little spinner and rerun to show the data is reloaded
+        with st.spinner("Refreshing..."):
+            time.sleep(1)
+        st.experimental_rerun()
+
+    except Exception as e:
+        st.error(f"An error occurred while saving to the database: {e}")
 
 work_rates = st.session_state['work_rates']
 
