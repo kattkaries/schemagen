@@ -122,7 +122,7 @@ if 'work_rates' not in st.session_state:
     st.session_state['work_rates'] = work_rates
 
 # Collapsible segment for work rates
-with st.expander("Arbetstid per medarbetare (justera vid behov)"):
+with st.expander("Klinisk arbetstid per medarbetare (justera vid behov)"):
     for emp in pre_pop_employees:
         key = f"rate_{emp}"
         value_from_state = int(st.session_state['work_rates'].get(emp, 100))
