@@ -44,10 +44,12 @@ days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 with st.expander("Assign Unavailable Employees per Day"):
     unavailable_per_day = {}
     for day in days:
+        # Filter default values to only include employees still available
+        default_values = [emp for emp in pre_unavailable.get(day, []) if emp in available_employees]
         unavailable_per_day[day] = st.multiselect(
             f"Initials of employees unavailable on {day}",
             options=available_employees,
-            default=pre_unavailable.get(day, [])
+            default=default_values
         )
 
 # Load work rates from Supabase (fallback to defaults)
@@ -94,6 +96,8 @@ with st.expander("MDK Assignments Overview (Bar Graph)"):
         st.plotly_chart(fig)
     else:
         st.info("No MDK assignments in history yet.")
+        # Debug: Check if data is being inserted
+        st.write("Debug: Assignments fetched:", assignments)
 
 # Historical Schedules Upload (last 8 weeks)
 current_week = date.today().isocalendar()[1]
