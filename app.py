@@ -72,7 +72,6 @@ with st.expander("Employee work rates (adjust as needed)"):
             value=float(st.session_state['work_rates'][emp]),
             step=0.05
         )
-# NEW CODE
 if st.button("Save Work Rates to Database"):
     try:
         # 1. Prepare a list of all records to be saved
@@ -89,7 +88,8 @@ if st.button("Save Work Rates to Database"):
         # Optional: Add a little spinner and rerun to show the data is reloaded
         with st.spinner("Refreshing..."):
             time.sleep(1)
-        st.experimental_rerun()
+        # FIX: Use the modern st.rerun() instead of the old experimental name
+        st.rerun()
 
     except Exception as e:
         st.error(f"An error occurred while saving to the database: {e}")
