@@ -13,9 +13,7 @@ def trigger_auto_download(file_bytes, filename):
     """
     Generates a hidden link and clicks it to trigger a download, with a small delay for robustness.
     """
-    # Ensure the file pointer is at the start
-    file_bytes.seek(0)
-    b64 = base64.b64encode(file_bytes.read()).decode()
+    b64 = base64.b64encode(file_bytes).decode()
     href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{filename}" id="auto_download_link" style="display: none;">Download</a>'
     
     # Note the escaped curly braces {{ and }} for the f-string
@@ -289,3 +287,5 @@ if st.button("Generera Schema"):
             file_name=f"schema_v{current_week}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
+        st.success("Schemat har genererats framgångsrikt!")  # Swedish translation
