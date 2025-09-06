@@ -34,7 +34,24 @@ st.title("Schemagenerator för världens bästa enhet!")
 available_week = st.multiselect(
     "Initialer för samtliga medarbetare",
     options=pre_pop_employees,
-    default=pre_pop_employees
+    default=pre_pop_employees,
+    key="available_employees_multiselect"  # Unique key for CSS targeting
+)
+
+# Inject custom CSS to change selected item color to green
+st.markdown(
+    """
+    <style>
+    .stMultiSelect[data-baseweb="select"] div[role="listbox"] .css-1p3nkiy {
+        background-color: #4CAF50 !important; /* Green color */
+        color: white !important; /* White text for contrast */
+    }
+    .stMultiSelect[data-baseweb="select"] div[role="listbox"] .css-1p3nkiy:hover {
+        background-color: #45a049 !important; /* Slightly darker green on hover */
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
 )
 
 # Input for unavailable whole week
