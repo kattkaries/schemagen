@@ -5,6 +5,7 @@ from datetime import date
 import io
 from supabase import create_client, Client
 import plotly.express as px
+import time
 
 # Initialize Supabase client using Streamlit secrets
 supabase_url = st.secrets["SUPABASE_URL"]
@@ -118,15 +119,19 @@ with st.expander("Historical Schedules (Last 8 Weeks)"):
             supabase.storage.from_("schedules").upload(file_name, file_content, {"upsert": "true"})
             st.success(f"Uploaded {file_name}")
 
+            # Add a short delay to ensure the upload is reflected
+            time.sleep(1)  # Wait 1 second for Supabase to sync
+
             # Parse and update mdk_assignments
             downloaded = supabase.storage.from_("schedules").download(file_name)
             if downloaded:
                 wb = openpyxl.load_workbook(io.BytesIO(downloaded))
                 # Use the first sheet if "Blad1" is not found
-                sheet = wb["Blad1"] if "Blad1" in wb.sheetnames else wb.sheetnames[0]
+                sheet = wb["Blad1"] if "Blad1" in wb.sheetnames else wb.active
                 st.write("Debug: Using sheet:", sheet.title)  # Debug sheet name
                 mdk_cols = {'Monday': 'D', 'Tuesday': 'H', 'Thursday': 'P'}
                 st.write("Debug: Parsing MDK assignments for week", week)  # Debug log
+                parsed_days = 0
                 for day, col in mdk_cols.items():
                     cell_value = sheet.cell(row=3, column=openpyxl.utils.column_index_from_string(col)).value
                     st.write(f"Debug: {day} MDK value: {cell_value}")  # Debug parsed value
@@ -134,11 +139,12 @@ with st.expander("Historical Schedules (Last 8 Weeks)"):
                         try:
                             supabase.table("mdk_assignments").upsert({"week": week, "day": day, "employee": cell_value.strip()}).execute()
                             st.success(f"Inserted MDK assignment: {week}, {day}, {cell_value}")
+                            parsed_days += 1
                         except Exception as e:
                             st.error(f"Failed to upsert {day} MDK assignment: {e}")
                     else:
                         st.warning(f"Skipping invalid MDK value for {day}: {cell_value}")
-                st.success(f"Parsed and updated MDK assignments for week {week}")
+                st.success(f"Parsed and updated MDK assignments for week {week}. {parsed_days} days added.")
 
 # Button to generate schedule
 if st.button("Generate Schedule"):
