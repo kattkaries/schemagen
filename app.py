@@ -42,11 +42,11 @@ available_week = st.multiselect(
 st.markdown(
     """
     <style>
-    .stMultiSelect[data-baseweb="select"] div[role="listbox"] .css-1p3nkiy {
+    [data-testid="stMultiSelect-available_employees_multiselect"] .stMultiSelect div[role="option"][aria-selected="true"] {
         background-color: #4CAF50 !important; /* Green color */
         color: white !important; /* White text for contrast */
     }
-    .stMultiSelect[data-baseweb="select"] div[role="listbox"] .css-1p3nkiy:hover {
+    [data-testid="stMultiSelect-available_employees_multiselect"] .stMultiSelect div[role="option"][aria-selected="true"]:hover {
         background-color: #45a049 !important; /* Slightly darker green on hover */
     }
     </style>
