@@ -13,7 +13,9 @@ def trigger_auto_download(file_bytes, filename):
     """
     Generates a hidden link and clicks it to trigger a download, with a small delay for robustness.
     """
-    b64 = base64.b64encode(file_bytes).decode()
+    # Ensure the file pointer is at the start
+    file_bytes.seek(0)
+    b64 = base64.b64encode(file_bytes.read()).decode()
     href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{filename}" id="auto_download_link" style="display: none;">Download</a>'
     
     # Note the escaped curly braces {{ and }} for the f-string
@@ -24,8 +26,10 @@ def trigger_auto_download(file_bytes, filename):
             if (link) {{
                 link.click();
                 link.remove();
+            }} else {{
+                console.log("Auto-download link not found");
             }}
-        }}, 100); // 100ms delay
+        }}, 500); // Increased delay to 500ms
     </script>
     """
     st.markdown(href + js, unsafe_allow_html=True)
@@ -276,3 +280,12 @@ if st.button("Generera Schema"):
         st.success("Schemat har genererats! Nedladdning startar...")
         # --- TRIGGER AUTO-DOWNLOAD ---
         trigger_auto_download(output_file.getvalue(), f"schema_v{current_week}.xlsx")
+
+        # --- MANUAL DOWNLOAD FALLBACK ---
+        output_file.seek(0)
+        st.download_button(
+            label="Ladda ner schemat manuellt",
+            data=output_file,
+            file_name=f"schema_v{current_week}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
