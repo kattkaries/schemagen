@@ -79,8 +79,14 @@ work_rates = st.session_state['work_rates']
 
 # MDK Overview Bar Graph
 with st.expander("MDK Assignments Overview (Bar Graph)"):
-    response = supabase.table("mdk_assignments").select("employee, count", count="exact").group("employee").execute()
-    mdk_counts = {row['employee']: row['count'] for row in response.data if row['count'] > 0}
+    # Fetch all MDK assignments and group by employee in Python
+    response = supabase.table("mdk_assignments").select("employee").execute()
+    assignments = response.data if response.data else []
+    mdk_counts = {}
+    for assignment in assignments:
+        emp = assignment['employee']
+        mdk_counts[emp] = mdk_counts.get(emp, 0) + 1
+    mdk_counts = {k: v for k, v in mdk_counts.items() if v > 0}  # Only show employees with >0 MDKs
     if mdk_counts:
         employees = list(mdk_counts.keys())
         counts = list(mdk_counts.values())
