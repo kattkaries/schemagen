@@ -7,6 +7,30 @@ from supabase import create_client, Client
 import plotly.express as px
 import time
 
+# --- CSS FÖR ATT STYLA MULTISELECT ---
+st.markdown("""
+<style>
+    /* Hitta containern för den första multiselect-widgeten på sidan */
+    div[data-testid="stMultiSelect"]:first-of-type {
+        /* Denna selektor används bara för att avgränsa, ingen stil behövs här */
+    }
+
+    /* Inom den första multiselect, hitta alla valda "tags" */
+    div[data-testid="stMultiSelect"]:first-of-type [data-baseweb="tag"] {
+        background-color: #2E8B57; /* En fin havsgrön färg (SeaGreen) */
+        border-radius: 0.5rem;    /* Valfritt: gör dem lite rundare */
+    }
+
+    /* Bonus: Gör texten och krysset i tagen vita för bättre kontrast */
+    div[data-testid="stMultiSelect"]:first-of-type [data-baseweb="tag"] span {
+        color: white !important;
+    }
+    div[data-testid="stMultiSelect"]:first-of-type [data-baseweb="tag"] span[role="button"] {
+        color: white !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # --- SWEDISH TRANSLATION SETUP ---
 days_sv = {
     'Monday': 'Måndag', 'Tuesday': 'Tisdag', 'Wednesday': 'Onsdag', 
