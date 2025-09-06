@@ -4,8 +4,14 @@ import random
 from datetime import date
 import io
 from supabase import create_client, Client
-from streamlit_kanban_board import kanban_board
 import plotly.express as px
+
+try:
+    from streamlit_kanban_board import kanban_board
+    KANBAN_AVAILABLE = True
+except ImportError:
+    KANBAN_AVAILABLE = False
+    st.warning("Kanban board component not available. Using multiselect instead.")
 
 # Initialize Supabase client using Streamlit secrets
 supabase_url = st.secrets["SUPABASE_URL"]
@@ -40,47 +46,57 @@ unavailable_whole_week = st.multiselect(
 
 available_employees = [emp for emp in available_week if emp not in unavailable_whole_week]
 
-# Drag-and-drop for unavailable per day using Kanban board
+# Drag-and-drop or multiselect for unavailable per day
 days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-with st.expander("Assign Unavailable Employees per Day (Drag-and-Drop)"):
-    st.write("Drag employees from 'Available' to 'Unavailable [Day]' columns.")
+if KANBAN_AVAILABLE:
+    with st.expander("Assign Unavailable Employees per Day (Drag-and-Drop)"):
+        st.write("Drag employees from 'Available' to 'Unavailable [Day]' columns.")
 
-    stages = [
-        {"id": "available", "name": "Available", "color": "#27ae60"},
-    ] + [
-        {"id": day.lower(), "name": f"Unavailable {day}", "color": "#e74c3c"} for day in days
-    ]
+        stages = [
+            {"id": "available", "name": "Available", "color": "#27ae60"},
+        ] + [
+            {"id": day.lower(), "name": f"Unavailable {day}", "color": "#e74c3c"} for day in days
+        ]
 
-    initial_kanban_data = [{"id": emp, "stage": "available", "company_name": emp} for emp in available_employees]
+        initial_kanban_data = [{"id": emp, "stage": "available", "company_name": emp} for emp in available_employees]
 
-    # Apply pre-unavailable defaults
-    for day, emps in pre_unavailable.items():
-        for emp in emps:
-            if emp in available_employees:
-                for item in initial_kanban_data:
-                    if item["id"] == emp:
-                        item["stage"] = day.lower()
-                        break
+        # Apply pre-unavailable defaults
+        for day, emps in pre_unavailable.items():
+            for emp in emps:
+                if emp in available_employees:
+                    for item in initial_kanban_data:
+                        if item["id"] == emp:
+                            item["stage"] = day.lower()
+                            break
 
-    # Load or initialize kanban data in session state
-    if 'kanban_data' not in st.session_state or len(st.session_state['kanban_data']) != len(available_employees):
-        st.session_state['kanban_data'] = initial_kanban_data
+        # Load or initialize kanban data in session state
+        if 'kanban_data' not in st.session_state or len(st.session_state['kanban_data']) != len(available_employees):
+            st.session_state['kanban_data'] = initial_kanban_data
 
-    result = kanban_board(
-        board=stages,
-        data=st.session_state['kanban_data'],
-        key="unavailable_board"
-    )
+        result = kanban_board(
+            board=stages,
+            data=st.session_state['kanban_data'],
+            key="unavailable_board"
+        )
 
-    if result and result.get("type") == "card_move":
-        for item in st.session_state['kanban_data']:
-            if item["id"] == result["data"]["id"]:
-                item["stage"] = result["stage"]
-                break
-        st.rerun()  # Rerun to reflect changes
+        if result and result.get("type") == "card_move":
+            for item in st.session_state['kanban_data']:
+                if item["id"] == result["data"]["id"]:
+                    item["stage"] = result["stage"]
+                    break
+            st.rerun()  # Rerun to reflect changes
 
-    # Extract unavailable_per_day from kanban data
-    unavailable_per_day = {day: [item["id"] for item in st.session_state['kanban_data'] if item["stage"] == day.lower()] for day in days}
+        # Extract unavailable_per_day from kanban data
+        unavailable_per_day = {day: [item["id"] for item in st.session_state['kanban_data'] if item["stage"] == day.lower()] for day in days}
+else:
+    with st.expander("Assign Unavailable Employees per Day"):
+        unavailable_per_day = {}
+        for day in days:
+            unavailable_per_day[day] = st.multiselect(
+                f"Initials of employees unavailable on {day}",
+                options=available_employees,
+                default=pre_unavailable.get(day, [])
+            )
 
 # Load work rates from Supabase (fallback to defaults)
 default_work_rates = {emp: 1.0 for emp in pre_pop_employees}
