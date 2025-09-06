@@ -37,6 +37,10 @@ days_sv = {
     'Thursday': 'Torsdag', 'Friday': 'Fredag'
 }
 
+# --- TILLÄGG: Håller reda på bekräftelsesteget för radering ---
+if 'confirm_delete' not in st.session_state:
+    st.session_state.confirm_delete = False
+
 # Initialize Supabase client using Streamlit secrets
 supabase_url = st.secrets["SUPABASE_URL"]
 supabase_key = st.secrets["SUPABASE_KEY"]
@@ -134,6 +138,30 @@ with st.expander("Historiska scheman (Senaste 8 veckorna)"):
                         except Exception as e:
                             st.error(f"Misslyckades med att spara MDK-uppdrag för {days_sv[day]}: {e}")
                 st.success(f"Läste in och uppdaterade MDK-uppdrag för vecka {week}. {parsed_days} dagar tillagda.")
+
+    # --- TILLÄGG: KNAPP FÖR ATT RENSA MDK-HISTORIK ---
+    st.markdown("---")
+    if st.button("Rensa all MDK-historik"):
+        st.session_state.confirm_delete = True
+
+    if st.session_state.confirm_delete:
+        st.warning("Är du säker på att du vill radera all MDK-historik? Detta kan inte ångras.")
+        
+        col1, col2, _ = st.columns([1.5, 1, 4]) # Justerade kolumnbredder för text
+        with col1:
+            if st.button("Ja, radera all historik", type="primary"):
+                try:
+                    supabase.table("mdk_assignments").delete().neq("week", -1).execute()
+                    st.success("All MDK-historik har raderats.")
+                    st.session_state.confirm_delete = False
+                    time.sleep(2)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Ett fel uppstod vid radering: {e}")
+        with col2:
+            if st.button("Avbryt"):
+                st.session_state.confirm_delete = False
+                st.rerun()
 
 # Use percentages (0-100) for work rates
 default_work_rates = {emp: 100 for emp in pre_pop_employees}
@@ -244,16 +272,14 @@ if st.button("Generera Schema"):
 
             # Afternoon assignment (not Friday)
             if day != 'Friday':
-                afternoon_candidates = lab_candidates[:]
+                available_for_afternoon = lab_candidates[:]
                 # Remove MDK if present for full-day MDK days
-                if mdk in afternoon_candidates and day in ['Tuesday', 'Thursday']:
-                    afternoon_candidates.remove(mdk)
+                if mdk in available_for_afternoon and day in ['Tuesday', 'Thursday']:
+                    available_for_afternoon.remove(mdk)
 
-                # Prioritize variety: LAB for morning Screen/MR, Screen/MR for morning LAB
                 lab_people_afternoon = []
                 screen_mr_afternoon = []
-                available_for_afternoon = afternoon_candidates[:]
-
+                
                 # Assign LAB roles first, preferring those on Screen/MR in the morning
                 lab_slots = min(4, len(available_for_afternoon))
                 lab_candidates_afternoon = [emp for emp in available_for_afternoon if emp in morning_screen_mr] or available_for_afternoon
@@ -287,7 +313,8 @@ if st.button("Generera Schema"):
                 for p, l in afternoon_assign.items():
                     sheet[f"{klin_col}{lab_rows['afternoon1'][l]}"] = p
 
-                # Recalculate afternoon_remainder excluding all assigned employees
+                # The people in the afternoon Screen/MR column are simply everyone available 
+                # for the afternoon, minus those who were assigned to a LAB role.
                 afternoon_screen_mr_pool = [emp for emp in available_for_afternoon if emp not in lab_people_afternoon]
                 sheet[f"{screen_cols[day]}14"] = '/'.join(sorted(afternoon_screen_mr_pool))
 
@@ -295,7 +322,7 @@ if st.button("Generera Schema"):
             if mdk:
                 sheet[f"{mdk_cols[day]}3"] = mdk
             elif day == 'Wednesday' and avail_day:
-                sheet[f"{lunchvakt_col['Wednesday']}3"] = random.choice(avail_day)
+                sheet[f"{lunchvakt_col['Wednesday']}3"] = random.choice(avail_ay)
 
         # Save new MDK assignments to Supabase
         for day, emp in mdk_assignments.items():
