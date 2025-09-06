@@ -1,5 +1,5 @@
 streamlit
 openpyxl
-streamlit-kanban-board-goviceversa==0.1.0
+streamlit-kanban-board-goviceversa
 plotly
 supabase
