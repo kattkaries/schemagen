@@ -7,6 +7,12 @@ from supabase import create_client, Client
 import plotly.express as px
 import time
 
+# --- SWEDISH TRANSLATION SETUP ---
+days_sv = {
+    'Monday': 'Måndag', 'Tuesday': 'Tisdag', 'Wednesday': 'Onsdag', 
+    'Thursday': 'Torsdag', 'Friday': 'Fredag'
+}
+
 # Initialize Supabase client using Streamlit secrets
 supabase_url = st.secrets["SUPABASE_URL"]
 supabase_key = st.secrets["SUPABASE_KEY"]
@@ -145,11 +151,6 @@ with st.expander("Arbetstid per medarbetare (justera vid behov)"):
             st.error(f"Ett fel uppstod vid sparning till databasen: {e}")
 
 work_rates = st.session_state['work_rates']
-
-days_sv = {
-    'Monday': 'Måndag', 'Tuesday': 'Tisdag', 'Wednesday': 'Onsdag', 
-    'Thursday': 'Torsdag', 'Friday': 'Fredag'
-}
 
 # Button to generate schedule
 if st.button("Generera Schema"):
