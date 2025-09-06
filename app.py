@@ -8,10 +8,11 @@ import plotly.express as px
 import time
 import base64  # Required for the automatic download
 
-# --- AUTO-DOWNLOAD HELPER FUNCTION (IMPROVED) ---
+# --- AUTO-DOWNLOAD HELPER FUNCTION (IMPROVED FROM FLASK PRINCIPLE) ---
 def trigger_auto_download(file_bytes, filename):
     """
     Generates a hidden link and clicks it to trigger a download, with a small delay for robustness.
+    Inspired by Flask's send_file, but adapted for Streamlit's client-side rendering.
     """
     b64 = base64.b64encode(file_bytes).decode()
     href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{filename}" id="auto_download_link" style="display: none;">Download</a>'
@@ -19,15 +20,19 @@ def trigger_auto_download(file_bytes, filename):
     # Note the escaped curly braces {{ and }} for the f-string
     js = f"""
     <script>
-        setTimeout(function() {{
-            const link = document.getElementById('auto_download_link');
-            if (link) {{
-                link.click();
-                link.remove();
-            }} else {{
-                console.log("Auto-download link not found");
-            }}
-        }}, 500); // Increased delay to 500ms
+        // Wait for the document to be ready
+        document.addEventListener('DOMContentLoaded', function() {{
+            setTimeout(function() {{
+                const link = document.getElementById('auto_download_link');
+                if (link) {{
+                    link.click();
+                    link.remove();
+                    console.log("Auto-download triggered");
+                }} else {{
+                    console.log("Auto-download link not found");
+                }}
+            }}, 500); // Increased delay to 500ms
+        }});
     </script>
     """
     st.markdown(href + js, unsafe_allow_html=True)
