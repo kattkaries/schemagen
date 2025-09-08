@@ -276,6 +276,7 @@ with st.expander("💼 Klinisk arbetstid per medarbetare (%)"):
 work_rates = st.session_state['work_rates']
 
 # --- UI: GENERATE SCHEDULE BUTTON ---
+# --- UI: GENERATE SCHEDULE BUTTON ---
 if st.button("✨ Generera Schema", type="primary"):
     with st.spinner("Tänker, slumpar och skapar... ett ögonblick..."):
         # --- MDK ASSIGNMENT LOGIC ---
@@ -305,8 +306,7 @@ if st.button("✨ Generera Schema", type="primary"):
                 # Heavy penalty for being assigned MDK already this week.
                 this_week_penalty = assigned_this_week[emp] * 10
                 
-                # Lower score is better. Score is based on historical count, penalized by work rate.
-                # A lower work rate means a higher penalty (score).
+                # Lower score is better.
                 score = (history_count / rate_factor if rate_factor > 0 else float('inf')) + this_week_penalty
                 scores[emp] = score
 
@@ -336,7 +336,7 @@ if st.button("✨ Generera Schema", type="primary"):
         }
         labs = list(lab_rows['morning1'].keys())
 
-        # --- NEW: Initialize a counter for Screen/MR shifts this week ---
+        # Initialize a counter for Screen/MR shifts this week
         screen_mr_counts = Counter()
 
         # Loop through each day to fill the schedule.
@@ -344,17 +344,13 @@ if st.button("✨ Generera Schema", type="primary"):
             avail_day = [emp for emp in available_employees if emp not in unavailable_per_day.get(day, [])]
             mdk = mdk_assignments.get(day)
             
-            # --- MODIFIED: Prioritize lab candidates based on previous Screen/MR shifts ---
-            # Sort available employees: those with more Screen/MR shifts (higher count) are prioritized for labs.
-            # This leaves those with fewer shifts (at the end of the list) for the Screen/MR pool.
-            # `reverse=True` puts those with higher counts first.
+            # Prioritize lab candidates based on previous Screen/MR shifts
             lab_priority_candidates = sorted(
                 avail_day,
                 key=lambda emp: screen_mr_counts.get(emp, 0),
                 reverse=True
             )
             
-            # Use this new prioritized list for lab assignments
             lab_candidates = lab_priority_candidates[:] 
             if mdk in lab_candidates and day in ['Tuesday', 'Thursday']: # Full-day MDK
                 lab_candidates.remove(mdk)
@@ -364,7 +360,11 @@ if st.button("✨ Generera Schema", type="primary"):
             if mdk in morning_candidates and day == 'Monday': # Half-day MDK
                 morning_candidates.remove(mdk)
 
-            lab_people_morning = random.sample(morning_candidates, k=min(len(morning_candidates), 4))
+            # --- *** THE CRITICAL FIX IS HERE *** ---
+            # Instead of random.sample, use a slice to respect the sorted priority.
+            num_lab_slots = min(len(morning_candidates), 4)
+            lab_people_morning = morning_candidates[:num_lab_slots]
+            
             random.shuffle(labs)
             morning_assign = dict(zip(lab_people_morning, labs))
             morning_remainder = [emp for emp in avail_day if emp not in lab_people_morning]
@@ -377,7 +377,7 @@ if st.button("✨ Generera Schema", type="primary"):
                 sheet[f"{klin_col}{lab_rows['morning2'][l]}"] = p
 
             # Afternoon assignment (not Friday)
-            afternoon_screen_mr_pool = [] # Initialize empty list for the counter
+            afternoon_screen_mr_pool = []
             if day != 'Friday':
                 available_for_afternoon = lab_candidates[:]
                 lab_slots = min(4, len(available_for_afternoon))
@@ -389,9 +389,9 @@ if st.button("✨ Generera Schema", type="primary"):
                 combined_candidates = preferred_candidates + other_candidates
                 lab_people_afternoon = combined_candidates[:lab_slots]
                 
-                # Simple derangement attempt to avoid assigning the same lab twice.
+                # Derangement attempt
                 afternoon_labs = labs[:]
-                for _ in range(10): # Try shuffling up to 10 times
+                for _ in range(10): 
                     random.shuffle(afternoon_labs)
                     afternoon_assign = dict(zip(lab_people_afternoon, afternoon_labs))
                     if all(afternoon_assign.get(p) != morning_assign.get(p) for p in afternoon_assign if p in morning_assign):
@@ -406,33 +406,28 @@ if st.button("✨ Generera Schema", type="primary"):
             # MDK and Lunch Guard assignment
             if mdk:
                 sheet[f"{mdk_cols[day]}3"] = mdk
-            elif day == 'Wednesday' and avail_day: # Lunch guard only on Wednesday
-                # Pick a random person from those available for the day.
+            elif day == 'Wednesday' and avail_day: # Lunch guard only
                 lunch_candidates = [p for p in avail_day if p not in lab_people_morning] or avail_day
                 sheet[f"{lunchvakt_col['Wednesday']}3"] = random.choice(lunch_candidates)
             
-            # --- NEW: Update the Screen/MR counter for the next day's logic ---
-            # Use a set to get unique employees from both morning and afternoon pools.
+            # Update the Screen/MR counter for the next day's logic
             all_screeners_today = set(morning_screen_mr) | set(afternoon_screen_mr_pool)
             for emp in all_screeners_today:
-                if emp != mdk or day not in mdk_days: # Only count if they weren't fully occupied by MDK
+                if emp != mdk or day not in mdk_days:
                     screen_mr_counts[emp] += 1
 
-
         # --- SAVE & DOWNLOAD ---
-        # Batch save new MDK assignments to the database in a single call.
         new_mdk_records = [
             {"week": current_week, "day": day, "employee": emp}
             for day, emp in mdk_assignments.items()
         ]
         if new_mdk_records:
             supabase.table("mdk_assignments").upsert(new_mdk_records).execute()
-            st.cache_data.clear() # Invalidate cache to reflect new assignments
+            st.cache_data.clear()
 
-        # Save the generated schedule to a byte stream for download.
         output_file = io.BytesIO()
         wb.save(output_file)
-        output_file.seek(0) # Rewind the stream to the beginning
+        output_file.seek(0)
         
         st.success("✅ Schemat har genererats!")
         st.download_button(
