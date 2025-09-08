@@ -129,12 +129,24 @@ with st.expander("MDK-fördelning de senaste månaderna (stapeldiagram)"):
             labels={'x': 'Medarbetare', 'y': 'Antal MDK'},
             title="MDK-fördelning de senaste 2 månaderna",
             color=counts,
-            color_continuous_scale=["green", "yellow", "red"],  # low=green, high=red
+            color_continuous_scale=["green", "yellow", "red"],
+            opacity=0.85,   # transparency
         )
-        fig.update_coloraxes(showscale=False)  # hide legend if you want a clean look
+
+        # Modern styling
+        fig.update_traces(text=counts, textposition="outside", marker_line_width=0, marker_line_color="rgba(0,0,0,0)")
+        fig.update_layout(
+            plot_bgcolor="rgba(0,0,0,0)",  # transparent background
+            paper_bgcolor="rgba(0,0,0,0)",
+            yaxis=dict(dtick=1, showgrid=False, zeroline=False),
+            xaxis=dict(showgrid=False, zeroline=False),
+            font=dict(size=14),
+            margin=dict(t=60, b=40, l=40, r=20),
+        )
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("Inga MDK-uppdrag i historiken ännu.")
+
 
 
 # --- Historical schedules ---
