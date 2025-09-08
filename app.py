@@ -12,7 +12,7 @@ import math
 # --- PAGE CONFIGURATION ---
 # Set page to centered layout for better readability on wide screens.
 st.set_page_config(
-    page_title="Schedule Generator",
+    page_title="Schemagenerator",
     page_icon="📅",
     layout="centered"
 )
@@ -30,7 +30,7 @@ st.markdown("""
     /* Style the selected "tags" within the first multiselect widget */
     div[data-testid="stMultiSelect"]:first-of-type [data-baseweb="tag"] {
         background-color: #2E8B57; /* SeaGreen */
-        border-radius: 0.5rem;    /* Optional: for rounded corners */
+        border-radius: 0.5rem;   /* Optional: for rounded corners */
     }
 
     /* Improve contrast by making the text and 'x' button white */
@@ -336,18 +336,32 @@ if st.button("✨ Generera Schema", type="primary"):
         }
         labs = list(lab_rows['morning1'].keys())
 
+        # --- NEW: Initialize a counter for Screen/MR shifts this week ---
+        screen_mr_counts = Counter()
+
         # Loop through each day to fill the schedule.
         for day in DAYS:
             avail_day = [emp for emp in available_employees if emp not in unavailable_per_day.get(day, [])]
             mdk = mdk_assignments.get(day)
             
-            lab_candidates = avail_day[:]
-            if mdk in lab_candidates and day in ['Tuesday', 'Thursday']:  # Full-day MDK
+            # --- MODIFIED: Prioritize lab candidates based on previous Screen/MR shifts ---
+            # Sort available employees: those with more Screen/MR shifts (higher count) are prioritized for labs.
+            # This leaves those with fewer shifts (at the end of the list) for the Screen/MR pool.
+            # `reverse=True` puts those with higher counts first.
+            lab_priority_candidates = sorted(
+                avail_day,
+                key=lambda emp: screen_mr_counts.get(emp, 0),
+                reverse=True
+            )
+            
+            # Use this new prioritized list for lab assignments
+            lab_candidates = lab_priority_candidates[:] 
+            if mdk in lab_candidates and day in ['Tuesday', 'Thursday']: # Full-day MDK
                 lab_candidates.remove(mdk)
 
             # Morning assignment
             morning_candidates = lab_candidates[:]
-            if mdk in morning_candidates and day == 'Monday':  # Half-day MDK
+            if mdk in morning_candidates and day == 'Monday': # Half-day MDK
                 morning_candidates.remove(mdk)
 
             lab_people_morning = random.sample(morning_candidates, k=min(len(morning_candidates), 4))
@@ -363,6 +377,7 @@ if st.button("✨ Generera Schema", type="primary"):
                 sheet[f"{klin_col}{lab_rows['morning2'][l]}"] = p
 
             # Afternoon assignment (not Friday)
+            afternoon_screen_mr_pool = [] # Initialize empty list for the counter
             if day != 'Friday':
                 available_for_afternoon = lab_candidates[:]
                 lab_slots = min(4, len(available_for_afternoon))
@@ -376,7 +391,7 @@ if st.button("✨ Generera Schema", type="primary"):
                 
                 # Simple derangement attempt to avoid assigning the same lab twice.
                 afternoon_labs = labs[:]
-                for _ in range(10):  # Try shuffling up to 10 times
+                for _ in range(10): # Try shuffling up to 10 times
                     random.shuffle(afternoon_labs)
                     afternoon_assign = dict(zip(lab_people_afternoon, afternoon_labs))
                     if all(afternoon_assign.get(p) != morning_assign.get(p) for p in afternoon_assign if p in morning_assign):
@@ -395,6 +410,14 @@ if st.button("✨ Generera Schema", type="primary"):
                 # Pick a random person from those available for the day.
                 lunch_candidates = [p for p in avail_day if p not in lab_people_morning] or avail_day
                 sheet[f"{lunchvakt_col['Wednesday']}3"] = random.choice(lunch_candidates)
+            
+            # --- NEW: Update the Screen/MR counter for the next day's logic ---
+            # Use a set to get unique employees from both morning and afternoon pools.
+            all_screeners_today = set(morning_screen_mr) | set(afternoon_screen_mr_pool)
+            for emp in all_screeners_today:
+                if emp != mdk or day not in mdk_days: # Only count if they weren't fully occupied by MDK
+                    screen_mr_counts[emp] += 1
+
 
         # --- SAVE & DOWNLOAD ---
         # Batch save new MDK assignments to the database in a single call.
