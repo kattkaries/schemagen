@@ -129,7 +129,7 @@ with st.expander("MDK-fördelning de senaste månaderna (stapeldiagram)"):
             labels={'x': 'Medarbetare', 'y': 'Antal MDK'},
             title="MDK-fördelning de senaste 2 månaderna",
             color=counts,
-            color_continuous_scale=["blugrn"],  # Blugrn color scale
+            color_continuous_scale="blugrn",  # Blugrn color scale
         )
         fig.update_coloraxes(showscale=False)  # hide legend if you want a clean look
 
