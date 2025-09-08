@@ -74,7 +74,7 @@ pre_unavailable = {
 }
 
 # --- Title ---
-st.title("Schemagenerator för världens bästa enhet!")
+st.title("Dags att fixa ett schema åt världens bästa enhet? Nu kör vi!")
 
 # --- Employee selection ---
 st.markdown('<div id="ms-emp">', unsafe_allow_html=True)
