@@ -112,26 +112,21 @@ if supabase:
         historical_mdk_counts = {emp: 0 for emp in pre_pop_employees}
 
 # MDK Overview Bar Graph (reuses fetched data)
-with st.expander("📊 MDK-fördelning de senaste månaderna (stapeldiagram)"):
-    if mdk_data and historical_mdk_counts:
-        mdk_counts = {k: v for k, v in historical_mdk_counts.items() if v > 0}
-        if mdk_counts:
-            # Sort by count descending (efficient)
-            sorted_items = sorted(mdk_counts.items(), key=lambda x: x[1], reverse=True)
-            employees, counts = zip(*sorted_items)
-            fig = px.bar(
-                x=employees,
-                y=counts,
-                labels={'x': 'Medarbetare', 'y': 'Antal MDK'},
-                title="MDK-fördelning de senaste månaderna",  # Minor text tweak
-                color=counts,
-                color_continuous_scale="blugrn",
-            )
-            fig.update_coloraxes(showscale=False)
-            fig.update_yaxes(dtick=1)
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("ℹ️ Inga MDK-uppdrag i historiken ännu.")
+with st.expander("MDK-fördelning de senaste månaderna (stapeldiagram)"):
+    response = supabase.table("mdk_assignments").select("employee").execute()
+    assignments = response.data if response.data else []
+    mdk_counts = {}
+    for assignment in assignments:
+        emp = assignment['employee']
+        mdk_counts[emp] = mdk_counts.get(emp, 0) + 1
+    mdk_counts = {k: v for k, v in mdk_counts.items() if v > 0}
+    if mdk_counts:
+        employees = list(mdk_counts.keys())
+        counts = list(mdk_counts.values())
+        fig = px.bar(x=employees, y=counts, 
+                     labels={'x': 'Medarbetare', 'y': 'Antal MDK'}, 
+                     title="MDK-fördelning de senaste 2 månaderna")
+        st.plotly_chart(fig)
     else:
         st.info("ℹ️ Inga data tillgängliga för MDK-grafen.")
 
