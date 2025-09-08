@@ -97,15 +97,15 @@ st.title("📅 Schemagenerator för världens bästa enhet!")
 
 st.info(
     "**💡 Användarinstruktioner:**\n\n"
-    "1. **Ställ in närvaro:** Justera listan över medarbetare som är tillgängliga under veckan.\n"
-    "2. **Ange frånvaro:** Markera medarbetare som är frånvarande hela veckan eller specifika dagar.\n"
-  "3. **Granska & justera:** Kontrollera MDK-historiken och arbetstiden. Spara eventuella ändringar i arbetstid.\n"
-    "4. **Generera:** Klicka på '✨ Generera Schema' för att skapa ett nytt veckoschema."
+    "1. **Ange frånvaro:** Markera medarbetare som är frånvarande hela veckan eller specifika dagar.\n"
+    "2. **Granska & justera:** Kontrollera MDK-historiken och arbetstiden. Spara eventuella ändringar i arbetstid.\n"
+    "3. **Generera:** Klicka på '✨ Generera Schema' för att skapa ett nytt veckoschema.\n"
+    "4. **Ladda hem:** Klicka på '📥 Ladda ner schemat för ta hem schemat.\n"
 )
 
 # --- UI: EMPLOYEE AVAILABILITY SETUP ---
 available_week = st.multiselect(
-    "👥 Initialer för samtliga medarbetare denna vecka",
+    "🙋 Initialer för samtliga medarbetare denna vecka",
     options=PRE_POP_EMPLOYEES,
     default=PRE_POP_EMPLOYEES
 )
@@ -120,7 +120,7 @@ unavailable_whole_week = st.multiselect(
 available_employees = [emp for emp in available_week if emp not in unavailable_whole_week]
 
 # UI for setting unavailability per day.
-with st.expander("🗓️ Ange otillgänglighet per dag", expanded=True):
+with st.expander("📅 Ange otillgänglighet per dag", expanded=True):
     unavailable_per_day = {}
     for day in DAYS:
         default_values = [emp for emp in PRE_UNAVAILABLE.get(day, []) if emp in available_employees]
