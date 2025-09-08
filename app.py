@@ -87,35 +87,22 @@ with st.expander("Ange otillgänglighet per dag", expanded=True):
 
 # MDK Overview Bar Graph
 with st.expander("MDK-fördelning de senaste månaderna (stapeldiagram)"):
-    assignments = fetch_all_mdk()
+    response = supabase.table("mdk_assignments").select("employee").execute()
+    assignments = response.data if response.data else []
     mdk_counts = {}
-    for a in assignments:
-        emp = a['employee']
+    for assignment in assignments:
+        emp = assignment['employee']
         mdk_counts[emp] = mdk_counts.get(emp, 0) + 1
     mdk_counts = {k: v for k, v in mdk_counts.items() if v > 0}
-
     if mdk_counts:
-        # Sort employees by MDK count (descending)
-        sorted_items = sorted(mdk_counts.items(), key=lambda x: x[1], reverse=True)
-        employees, counts = zip(*sorted_items)
-
-        fig = px.bar(
-            x=employees,
-            y=counts,
-            labels={'x': 'Medarbetare', 'y': 'Antal MDK'},
-            title="MDK-fördelning de senaste 2 månaderna",
-            color=counts,
-            color_continuous_scale="blugrn",  # built-in blue→green
-        )
-        fig.update_coloraxes(showscale=False)  # hide legend if desired
-
-        # Force integer ticks only on Y-axis
-        fig.update_yaxes(dtick=1)
-
-        st.plotly_chart(fig, use_container_width=True)
+        employees = list(mdk_counts.keys())
+        counts = list(mdk_counts.values())
+        fig = px.bar(x=employees, y=counts, 
+                     labels={'x': 'Medarbetare', 'y': 'Antal MDK'}, 
+                     title="MDK-fördelning de senaste 2 månaderna")
+        st.plotly_chart(fig)
     else:
         st.info("Inga MDK-uppdrag i historiken ännu.")
-
 
 # Historical Schedules Upload (last 8 weeks)
 current_week = date.today().isocalendar()[1]
