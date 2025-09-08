@@ -117,16 +117,25 @@ with st.expander("MDK-fördelning de senaste månaderna (stapeldiagram)"):
         emp = a['employee']
         mdk_counts[emp] = mdk_counts.get(emp, 0) + 1
     mdk_counts = {k: v for k, v in mdk_counts.items() if v > 0}
+
     if mdk_counts:
+        # Sort employees by MDK count (descending)
+        sorted_items = sorted(mdk_counts.items(), key=lambda x: x[1], reverse=True)
+        employees, counts = zip(*sorted_items)
+
         fig = px.bar(
-            x=list(mdk_counts.keys()),
-            y=list(mdk_counts.values()),
+            x=employees,
+            y=counts,
             labels={'x': 'Medarbetare', 'y': 'Antal MDK'},
-            title="MDK-fördelning de senaste 2 månaderna"
+            title="MDK-fördelning de senaste 2 månaderna",
+            color=counts,
+            color_continuous_scale=["green", "yellow", "red"],  # low=green, high=red
         )
-        st.plotly_chart(fig)
+        fig.update_coloraxes(showscale=False)  # hide legend if you want a clean look
+        st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("Inga MDK-uppdrag i historiken ännu.")
+
 
 # --- Historical schedules ---
 iso_year, current_week, _ = date.today().isocalendar()
