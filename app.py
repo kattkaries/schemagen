@@ -95,8 +95,9 @@ with st.expander("MDK-fördelning de senaste månaderna (stapeldiagram)"):
         mdk_counts[emp] = mdk_counts.get(emp, 0) + 1
     mdk_counts = {k: v for k, v in mdk_counts.items() if v > 0}
     if mdk_counts:
-        employees = list(mdk_counts.keys())
-        counts = list(mdk_counts.values())
+        # Sort employees by MDK count (descending)
+        sorted_items = sorted(mdk_counts.items(), key=lambda x: x[1], reverse=True)
+        employees, counts = zip(*sorted_items)
         fig = px.bar(
             x=employees,
             y=counts,
