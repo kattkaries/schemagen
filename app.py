@@ -10,10 +10,11 @@ from collections import Counter
 import math
 
 # --- PAGE CONFIGURATION ---
+# Set page to centered layout for better readability on wide screens.
 st.set_page_config(
     page_title="Schedule Generator",
     page_icon="📅",
-    layout="wide"
+    layout="centered"
 )
 
 # --- CSS FOR STYLING THE MULTISELECT WIDGET ---
@@ -92,7 +93,7 @@ PRE_UNAVAILABLE = {
 DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 
 # --- UI: TITLE AND INSTRUCTIONS ---
-st.title("📅 Schemagenerator för Mammografienheten")
+st.title("📅 Schemagenerator för världens bästa enhet!")
 
 st.info(
     "**💡 Användarinstruktioner:**\n\n"
