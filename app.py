@@ -86,9 +86,9 @@ PRE_POP_EMPLOYEES = ['AH', 'LS', 'DS', 'KL', 'TH', 'LAO', 'AL', 'HS', 'AG', 'CB'
 PRE_UNAVAILABLE = {
     'Monday': ['DS', 'HS', 'LS'],
     'Tuesday': ['LAO', 'CB', 'HS', 'LS'],
-    'Wednesday': ['DS', 'AH', 'CB'],
-    'Thursday': ['CB'],
-    'Friday': ['CB', 'AL']
+    'Wednesday': ['DS', 'AH', 'CB', 'KL'],
+    'Thursday': ['CB', 'KL', 'NC'],
+    'Friday': ['CB', 'AL', 'KL']
 }
 DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 
