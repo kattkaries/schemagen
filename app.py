@@ -82,10 +82,10 @@ def fetch_all_data():
 all_mdk_assignments, db_work_rates_list = fetch_all_data()
 
 # --- PRE-POPULATED DATA & CONSTANTS ---
-PRE_POP_EMPLOYEES = ['AH', 'LS', 'DS', 'KL', 'TH', 'LAO', 'AL', 'HS', 'AG', 'CB']
+PRE_POP_EMPLOYEES = ['AH', 'LS', 'DS', 'KL', 'TH', 'LAO', 'AL', 'HS', 'AG', 'CB', 'NC']
 PRE_UNAVAILABLE = {
-    'Monday': ['DS'],
-    'Tuesday': ['LAO', 'CB'],
+    'Monday': ['DS', 'HS', 'LS'],
+    'Tuesday': ['LAO', 'CB', 'HS', 'LS'],
     'Wednesday': ['DS', 'AH', 'CB'],
     'Thursday': ['CB'],
     'Friday': ['CB', 'AL']
