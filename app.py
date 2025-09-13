@@ -69,19 +69,34 @@ except Exception:
 @st.cache_data(ttl=600)
 def fetch_all_data():
     """
-    Fetches MDK assignments and employee work rates.
+    Fetches MDK assignments, Screen/MR sessions, and employee work rates.
     """
-    mdk_response = supabase.table("mdk_assignments").select("employee, week, day").execute()
-    work_rate_response = supabase.table("work_rates").select("employee, rate").execute()
+    # MDK
+    try:
+        mdk_response = supabase.table("mdk_assignments").select("employee, week, day").execute()
+        mdk_data = mdk_response.data if mdk_response.data else []
+    except Exception:
+        mdk_data = []
 
-    mdk_data = mdk_response.data if mdk_response.data else []
-    work_rate_data = work_rate_response.data if work_rate_response.data else []
+    # Work rates
+    try:
+        work_rate_response = supabase.table("work_rates").select("employee, rate").execute()
+        work_rate_data = work_rate_response.data if work_rate_response.data else []
+    except Exception:
+        work_rate_data = []
 
-    return mdk_data, work_rate_data
+    # Screen/MR sessions
+    try:
+        screen_mr_response = supabase.table("screen_mr_sessions").select("employee, week, day, block").execute()
+        screen_mr_data = screen_mr_response.data if screen_mr_response.data else []
+    except Exception:
+        screen_mr_data = []
+
+    return mdk_data, work_rate_data, screen_mr_data
 
 
 # Cached data (refresh via st.cache_data.clear() when mutated)
-all_mdk_assignments, db_work_rates_list = fetch_all_data()
+all_mdk_assignments, db_work_rates_list, all_screen_mr_sessions = fetch_all_data()
 
 # --- PRE-POPULATED DATA & CONSTANTS ---
 PRE_POP_EMPLOYEES = ["AH", "LS", "DS", "KL", "TH", "LAO", "AL", "HS", "AG", "CB", "NC"]
@@ -195,6 +210,97 @@ with st.expander("📊 MDK-fördelning (historik)"):
     else:
         st.info("Inga MDK-uppdrag finns i historiken ännu.")
 
+# --- NEW UI: Screen/MR DISTRIBUTION CHART (historik) ---
+with st.expander("📊 Screen/MR‑fördelning (historik)"):
+    if all_screen_mr_sessions:
+        weeks_available = sorted({row["week"] for row in all_screen_mr_sessions}, reverse=True)
+        selected_weeks = st.multiselect(
+            "Filtrera veckor (standard: alla)",
+            options=weeks_available,
+            default=weeks_available,
+        )
+        view_mode = st.radio(
+            "Visa som",
+            options=["Total", "Per block (stacked)"],
+            horizontal=True,
+            key="screenmr_view_mode",
+        )
+
+        filtered = [
+            row for row in all_screen_mr_sessions
+            if row.get("employee") in PRE_POP_EMPLOYEES
+            and (not selected_weeks or row.get("week") in selected_weeks)
+        ]
+
+        if not filtered:
+            st.info("Ingen Screen/MR‑data matchar det valda filtert.")
+        else:
+            if view_mode == "Total":
+                sm_counts = Counter(row["employee"] for row in filtered)
+                data = [{"employee": e, "count": c} for e, c in sm_counts.items()]
+                data.sort(key=lambda x: x["count"], reverse=True)
+
+                fig_sm = px.bar(
+                    data,
+                    x="employee",
+                    y="count",
+                    labels={"employee": "Medarbetare", "count": "Antal Screen/MR‑pass"},
+                    title="Screen/MR‑fördelning (baserat på uppladdad historik)",
+                    color="count",
+                    color_continuous_scale="teal",
+                )
+                fig_sm.update_layout(xaxis={"categoryorder": "total descending"})
+                fig_sm.update_coloraxes(showscale=False)
+                fig_sm.update_yaxes(dtick=1)
+                st.plotly_chart(fig_sm, use_container_width=True)
+
+                # CSV export
+                csv = "employee,count\n" + "\n".join(f"{d['employee']},{d['count']}" for d in data)
+                st.download_button(
+                    "⬇️ Ladda ner som CSV",
+                    data=csv.encode("utf-8"),
+                    file_name="screen_mr_distribution.csv",
+                    mime="text/csv",
+                )
+
+            else:  # Per block (stacked)
+                # Aggregate by (employee, block)
+                counts_by_pair = Counter((row["employee"], row.get("block", "unknown")) for row in filtered)
+                blocks = ["morning", "afternoon"]
+                # Build stacked chart data
+                bar_data = []
+                for (emp, blk), c in counts_by_pair.items():
+                    if blk not in blocks:
+                        continue
+                    bar_data.append({"employee": emp, "block": "FM" if blk == "morning" else "EM", "count": c})
+                # Ensure deterministic ordering
+                bar_data.sort(key=lambda x: (x["employee"], x["block"]))
+
+                fig_stacked = px.bar(
+                    bar_data,
+                    x="employee",
+                    y="count",
+                    color="block",
+                    barmode="stack",
+                    labels={"employee": "Medarbetare", "count": "Antal pass", "block": "Block"},
+                    title="Screen/MR‑fördelning per block (baserat på uppladdad historik)",
+                    color_discrete_map={"FM": "#1f77b4", "EM": "#ff7f0e"},
+                )
+                fig_stacked.update_layout(xaxis={"categoryorder": "total descending"})
+                fig_stacked.update_yaxes(dtick=1)
+                st.plotly_chart(fig_stacked, use_container_width=True)
+
+                # CSV export
+                csv2 = "employee,block,count\n" + "\n".join(f"{d['employee']},{d['block']},{d['count']}" for d in bar_data)
+                st.download_button(
+                    "⬇️ Ladda ner som CSV",
+                    data=csv2.encode("utf-8"),
+                    file_name="screen_mr_distribution_by_block.csv",
+                    mime="text/csv",
+                )
+    else:
+        st.info("Ingen Screen/MR‑historik uppladdad ännu.")
+
 # --- UI: HISTORICAL SCHEDULES (Senaste 8 veckorna) + CLEAR HISTORY (inside expander) ---
 current_week = date.today().isocalendar()[1]
 with st.expander("📝 Historiska scheman (Senaste 8 veckorna)"):
@@ -236,32 +342,31 @@ with st.expander("📝 Historiska scheman (Senaste 8 veckorna)"):
 
                     # --- Parse MDK (single cell per MDK day @ row 3) ---
                     parsed_mdk = []
-                    for day, col in mdk_cols.items():
+                    for d, col in mdk_cols.items():
                         col_idx = openpyxl.utils.column_index_from_string(col)
                         cell_value = sheet.cell(row=3, column=col_idx).value
                         if cell_value and isinstance(cell_value, str) and cell_value.strip() in PRE_POP_EMPLOYEES:
-                            parsed_mdk.append({"week": week, "day": day, "employee": cell_value.strip()})
+                            parsed_mdk.append({"week": week, "day": d, "employee": cell_value.strip()})
 
                     # --- Parse Screen/MR (morning row 3, afternoon row 14; may contain "A/B") ---
                     def parse_initials(value):
                         if not value:
                             return []
                         s = str(value)
-                        # Split on '/', ',', or '|' and strip; keep only known initials
                         tokens = [t.strip() for t in re.split(r'[/,|]+', s) if t.strip()]
                         return [t for t in tokens if t in PRE_POP_EMPLOYEES]
 
                     parsed_screen_mr = []
-                    for day in DAYS:
+                    for d in DAYS:
                         # Morning
-                        m_col_idx = openpyxl.utils.column_index_from_string(screen_cols[day])
+                        m_col_idx = openpyxl.utils.column_index_from_string(screen_cols[d])
                         m_val = sheet.cell(row=3, column=m_col_idx).value
                         for emp in parse_initials(m_val):
-                            parsed_screen_mr.append({"week": week, "day": day, "block": "morning", "employee": emp})
+                            parsed_screen_mr.append({"week": week, "day": d, "block": "morning", "employee": emp})
                         # Afternoon
                         a_val = sheet.cell(row=14, column=m_col_idx).value
                         for emp in parse_initials(a_val):
-                            parsed_screen_mr.append({"week": week, "day": day, "block": "afternoon", "employee": emp})
+                            parsed_screen_mr.append({"week": week, "day": d, "block": "afternoon", "employee": emp})
 
                     # --- Save parsed data to Supabase (replace only THIS week) ---
                     try:
@@ -279,6 +384,8 @@ with st.expander("📝 Historiska scheman (Senaste 8 veckorna)"):
                                 f"{len(parsed_mdk)} MDK och {len(parsed_screen_mr)} Screen/MR."
                             )
                             st.cache_data.clear()
+                            time.sleep(0.8)
+                            st.rerun()
                         else:
                             st.info(f"Inga giltiga MDK eller Screen/MR-initialer hittades i filen för vecka {week}.")
                     except Exception as e:
@@ -389,6 +496,7 @@ if st.button("✨ Generera Schema", type="primary"):
             chosen = min(scores, key=scores.get)
             mdk_assignments[day] = chosen
             assigned_this_week[chosen] += 1
+
         # --- SCHEDULE POPULATION LOGIC ---
         try:
             wb = openpyxl.load_workbook("template.xlsx")
@@ -511,6 +619,7 @@ if st.button("✨ Generera Schema", type="primary"):
 
                 for p, l in afternoon_assign.items():
                     sheet[f"{klin_col}{lab_rows['afternoon1'][l]}"] = p
+
                 # After labs, assign Screen/MR if anyone remains
                 afternoon_screen_pool = [
                     emp for emp in available_for_afternoon
