@@ -2,6 +2,7 @@ import io
 import math
 import random
 import time
+import re
 from collections import Counter
 from datetime import date
 
@@ -94,10 +95,8 @@ PRE_UNAVAILABLE = {
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 
 # --- Screen/MR configuration ---
-# Number of Screen/MR positions per block (morning & afternoon)
-SCREEN_MR_PER_BLOCK = 1
-# Soft weekly cap (prefer no more than this many Screen/MR per person per week)
-SCREEN_MR_WEEKLY_CAP = 1
+SCREEN_MR_PER_BLOCK = 1           # number of Screen/MR assignees per morning/afternoon
+SCREEN_MR_WEEKLY_CAP = 1          # soft cap per person/week
 
 
 # --- HELPERS: Weighted selection with weekly cap ---
@@ -113,10 +112,7 @@ def _unique_weighted_choices(candidates, weight_lookup, k):
     while pool and len(picks) < k:
         weights = [max(0.001, float(weight_lookup.get(c, 0))) for c in pool]
         total = sum(weights)
-        if total <= 0:
-            probs = None  # uniform-like if all zero
-        else:
-            probs = [w / total for w in weights]
+        probs = None if total <= 0 else [w / total for w in weights]
         chosen = random.choices(pool, weights=probs, k=1)[0]
         picks.append(chosen)
         pool.remove(chosen)
@@ -127,16 +123,13 @@ def weighted_sample_with_cap(candidates, weight_lookup, k, weekly_counts, cap):
     """
     Prefer people under the weekly cap; if not enough candidates under-cap, fill from over-cap pool.
     """
-    if k <= 0:
-        return []
-    if not candidates:
+    if k <= 0 or not candidates:
         return []
     under_cap = [c for c in candidates if weekly_counts.get(c, 0) < cap]
     if len(under_cap) >= k:
         return _unique_weighted_choices(under_cap, weight_lookup, k)
-    picks = under_cap[:]  # take all under-cap
+    picks = under_cap[:]
     remaining_k = k - len(picks)
-    # fill the rest from all remaining (over-cap or not previously chosen)
     over_cap_pool = [c for c in candidates if c not in picks]
     if remaining_k > 0 and over_cap_pool:
         picks.extend(_unique_weighted_choices(over_cap_pool, weight_lookup, remaining_k))
@@ -231,14 +224,17 @@ with st.expander("📝 Historiska scheman (Senaste 8 veckorna)"):
                 st.success(f"Laddade upp {file_name}")
                 time.sleep(1)
 
-                # Parse the uploaded file to extract MDK assignments
+                # Parse the uploaded file to extract MDK and Screen/MR history
                 downloaded = supabase.storage.from_("schedules").download(file_name)
                 if downloaded:
                     wb = openpyxl.load_workbook(io.BytesIO(downloaded))
                     sheet = wb["Blad1"] if "Blad1" in wb.sheetnames else wb.active
 
-                    # Columns used in the template for MDK
+                    # Mappings used in the template
                     mdk_cols = {"Monday": "D", "Tuesday": "H", "Thursday": "P"}
+                    screen_cols = {"Monday": "C", "Tuesday": "G", "Wednesday": "K", "Thursday": "O", "Friday": "S"}
+
+                    # --- Parse MDK (single cell per MDK day @ row 3) ---
                     parsed_mdk = []
                     for day, col in mdk_cols.items():
                         col_idx = openpyxl.utils.column_index_from_string(col)
@@ -246,15 +242,47 @@ with st.expander("📝 Historiska scheman (Senaste 8 veckorna)"):
                         if cell_value and isinstance(cell_value, str) and cell_value.strip() in PRE_POP_EMPLOYEES:
                             parsed_mdk.append({"week": week, "day": day, "employee": cell_value.strip()})
 
-                    if parsed_mdk:
-                        try:
+                    # --- Parse Screen/MR (morning row 3, afternoon row 14; may contain "A/B") ---
+                    def parse_initials(value):
+                        if not value:
+                            return []
+                        s = str(value)
+                        # Split on '/', ',', or '|' and strip; keep only known initials
+                        tokens = [t.strip() for t in re.split(r'[/,|]+', s) if t.strip()]
+                        return [t for t in tokens if t in PRE_POP_EMPLOYEES]
+
+                    parsed_screen_mr = []
+                    for day in DAYS:
+                        # Morning
+                        m_col_idx = openpyxl.utils.column_index_from_string(screen_cols[day])
+                        m_val = sheet.cell(row=3, column=m_col_idx).value
+                        for emp in parse_initials(m_val):
+                            parsed_screen_mr.append({"week": week, "day": day, "block": "morning", "employee": emp})
+                        # Afternoon
+                        a_val = sheet.cell(row=14, column=m_col_idx).value
+                        for emp in parse_initials(a_val):
+                            parsed_screen_mr.append({"week": week, "day": day, "block": "afternoon", "employee": emp})
+
+                    # --- Save parsed data to Supabase (replace only THIS week) ---
+                    try:
+                        if parsed_mdk:
+                            supabase.table("mdk_assignments").delete().eq("week", week).execute()
                             supabase.table("mdk_assignments").upsert(parsed_mdk).execute()
-                            st.success(f"Läste in och uppdaterade MDK-uppdrag för vecka {week} ({len(parsed_mdk)} dagar).")
+
+                        if parsed_screen_mr:
+                            supabase.table("screen_mr_sessions").delete().eq("week", week).execute()
+                            supabase.table("screen_mr_sessions").upsert(parsed_screen_mr).execute()
+
+                        if parsed_mdk or parsed_screen_mr:
+                            st.success(
+                                f"Sparade historik för vecka {week}: "
+                                f"{len(parsed_mdk)} MDK och {len(parsed_screen_mr)} Screen/MR."
+                            )
                             st.cache_data.clear()
-                        except Exception as e:
-                            st.error(f"Misslyckades med att spara MDK-uppdrag: {e}")
-                    else:
-                        st.info(f"Inga giltiga MDK-initialer hittades i filen för vecka {week}.")
+                        else:
+                            st.info(f"Inga giltiga MDK eller Screen/MR-initialer hittades i filen för vecka {week}.")
+                    except Exception as e:
+                        st.error(f"Misslyckades med att spara historik: {e}")
 
     # --- CLEAR MDK HISTORY (inside this expander) ---
     st.markdown("---")
@@ -328,11 +356,11 @@ work_rates = st.session_state["work_rates"]
 # --- UI: GENERATE SCHEDULE ---
 if st.button("✨ Generera Schema", type="primary"):
     with st.spinner("Tänker, slumpar och skapar... ett ögonblick..."):
-        # --- MDK ASSIGNMENT LOGIC ---
+        # --- MDK ASSIGNMENT LOGIC (no DB writes here) ---
         mdk_days = ["Monday", "Tuesday", "Thursday"]
         mdk_assignments = {}
 
-        # Pre-calculate historical MDK counts
+        # Pre-calculate historical MDK counts (from uploaded history only)
         mdk_history_counts = Counter(a["employee"] for a in all_mdk_assignments)
         assigned_this_week = Counter()
 
@@ -348,7 +376,8 @@ if st.button("✨ Generera Schema", type="primary"):
             if not avail_for_day:
                 st.warning(f"Inga tillgängliga medarbetare för MDK/lunch på {SWEDISH_DAYS[day]}")
                 continue
-            # Score: lower is better (less historical MDK, higher rate helps, strong penalty if already assigned this week)
+
+            # Score: lower is better
             scores = {}
             for emp in avail_for_day:
                 history_count = mdk_history_counts.get(emp, 0)
@@ -360,7 +389,6 @@ if st.button("✨ Generera Schema", type="primary"):
             chosen = min(scores, key=scores.get)
             mdk_assignments[day] = chosen
             assigned_this_week[chosen] += 1
-
         # --- SCHEDULE POPULATION LOGIC ---
         try:
             wb = openpyxl.load_workbook("template.xlsx")
@@ -369,6 +397,7 @@ if st.button("✨ Generera Schema", type="primary"):
             st.error("`template.xlsx` hittades inte. Se till att filen ligger i samma mapp som appen.")
             st.stop()
 
+        current_week = date.today().isocalendar()[1]
         sheet["A1"] = f"v.{current_week}"
 
         # Columns in template
@@ -398,19 +427,17 @@ if st.button("✨ Generera Schema", type="primary"):
             mdk = mdk_assignments.get(day)
 
             # Determine MDK behavior
-            is_full_day_mdk = (day in ["Tuesday", "Thursday"]) and bool(mdk)  # Tue/Thu MDK is full day
-            is_monday_mdk_morning = (day == "Monday") and bool(mdk)           # Mon MDK is morning only
+            is_full_day_mdk = (day in ["Tuesday", "Thursday"]) and bool(mdk)  # Tue/Thu: full day MDK
+            is_monday_mdk_morning = (day == "Monday") and bool(mdk)           # Mon: morning MDK
 
             # ============================
             # MORNING: FILL LABS FIRST
             # ============================
-            # Who can do morning labs?
             lab_eligible_morning = [
                 emp for emp in avail_day
                 if not (is_full_day_mdk and emp == mdk)         # exclude Tue/Thu MDK entirely
                 and not (is_monday_mdk_morning and emp == mdk)   # exclude Mon MDK from morning only
             ]
-            # Prioritize people who have screened more so they rotate into labs
             lab_priority_candidates = sorted(
                 lab_eligible_morning,
                 key=lambda emp: screen_mr_counts.get(emp, 0),
@@ -427,7 +454,8 @@ if st.button("✨ Generera Schema", type="primary"):
             for p, l in morning_assign.items():
                 sheet[f"{klin_col}{lab_rows['morning1'][l]}"] = p
                 sheet[f"{klin_col}{lab_rows['morning2'][l]}"] = p
-            # After labs, assign Screen/MR from the remainder only (respect MDK time-of-day rules)
+
+            # After labs, assign Screen/MR from the remainder only
             screen_pool_morning = [
                 emp for emp in avail_day
                 if emp not in lab_people_morning
@@ -447,12 +475,10 @@ if st.button("✨ Generera Schema", type="primary"):
             else:
                 screen_mr_morning = []
 
-            # Update counters for actual Screen/MR assignees
             for s in screen_mr_morning:
                 screen_mr_week_counts[s] += 1
                 screen_mr_counts[s] += 1
 
-            # Write morning Screen/MR assignee(s)
             sheet[f"{screen_cols[day]}3"] = "/".join(screen_mr_morning) if screen_mr_morning else ""
 
             # ============================
@@ -461,17 +487,16 @@ if st.button("✨ Generera Schema", type="primary"):
             if day != "Friday":
                 available_for_afternoon = [
                     emp for emp in avail_day
-                    if not (is_full_day_mdk and emp == mdk)   # Tue/Thu MDK stays excluded all day
+                    if not (is_full_day_mdk and emp == mdk)   # Tue/Thu MDK excluded all day
                 ]
                 afternoon_lab_slots = min(4, len(available_for_afternoon))
 
-                # Prefer morning Screen/MR folks for afternoon lab slots to rotate them
                 preferred_candidates = [emp for emp in (screen_mr_morning or []) if emp in available_for_afternoon]
                 other_candidates = [emp for emp in available_for_afternoon if emp not in preferred_candidates]
                 combined_candidates = preferred_candidates + other_candidates
                 lab_people_afternoon = combined_candidates[:afternoon_lab_slots]
 
-                # Try to avoid same lab morning vs afternoon for the same person (derangement attempt)
+                # Try to avoid same lab morning vs afternoon for the same person
                 afternoon_labs = labs[:]
                 afternoon_assign = {}
                 for _ in range(10):
@@ -484,11 +509,9 @@ if st.button("✨ Generera Schema", type="primary"):
                     ):
                         break
 
-                # Write afternoon labs
                 for p, l in afternoon_assign.items():
                     sheet[f"{klin_col}{lab_rows['afternoon1'][l]}"] = p
-
-                # After labs, assign Screen/MR only if anyone remains
+                # After labs, assign Screen/MR if anyone remains
                 afternoon_screen_pool = [
                     emp for emp in available_for_afternoon
                     if emp not in lab_people_afternoon
@@ -516,16 +539,11 @@ if st.button("✨ Generera Schema", type="primary"):
                 if day in mdk_cols:
                     sheet[f"{mdk_cols[day]}3"] = mdk
             elif day == "Wednesday":
-                # Lunch guard: AL is allowed as normal now; prefer non-lab morning people if possible
+                # Lunch guard: AL allowed normally; prefer non-lab morning people
                 lunch_candidates = [p for p in avail_day if p not in lab_people_morning] or avail_day
                 sheet[f"{lunchvakt_col['Wednesday']}3"] = random.choice(lunch_candidates) if lunch_candidates else ""
 
-        # --- SAVE & DOWNLOAD ---
-        new_mdk_records = [{"week": current_week, "day": d, "employee": e} for d, e in mdk_assignments.items()]
-        if new_mdk_records:
-            supabase.table("mdk_assignments").upsert(new_mdk_records).execute()
-            st.cache_data.clear()
-
+        # --- EXCEL DOWNLOAD (no DB writes here) ---
         output_file = io.BytesIO()
         wb.save(output_file)
         output_file.seek(0)
