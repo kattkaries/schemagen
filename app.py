@@ -391,20 +391,28 @@ with st.expander("📝 Historiska scheman (Senaste 8 veckorna)"):
                     except Exception as e:
                         st.error(f"Misslyckades med att spara historik: {e}")
 
-    # --- CLEAR MDK HISTORY (inside this expander) ---
+    # --- CLEAR HISTORY (MDK + Screen/MR) ---
     st.markdown("---")
-    st.error("Radering av historik kan inte ångras.")
-    if st.button("🗑️ Rensa all MDK-historik", key="btn_clear_mdk"):
+    st.error("Radering av historik (MDK + Screen/MR) kan inte ångras.")
+    if st.button("🗑️ Rensa all historik (MDK + Screen/MR)", key="btn_clear_all_history"):
         st.session_state.confirm_delete = True
 
     if st.session_state.confirm_delete:
-        st.warning("**Är du helt säker på att du vill radera ALL MDK-historik?**")
+        st.warning("**Är du helt säker på att du vill radera ALL historik (MDK + Screen/MR)?**")
         col1, col2, _ = st.columns([1.5, 1, 4])
         with col1:
-            if st.button("Ja, radera all historik", type="primary", key="btn_confirm_clear"):
+            if st.button("Ja, radera all historik", type="primary", key="btn_confirm_clear_all"):
                 try:
+                    # Always delete MDK
                     supabase.table("mdk_assignments").delete().neq("week", -1).execute()
-                    st.success("All MDK-historik har raderats.")
+                    # Try to delete Screen/MR (ignore if table not created yet)
+                    try:
+                        supabase.table("screen_mr_sessions").delete().neq("week", -1).execute()
+                    except Exception:
+                        # If the table doesn't exist yet, we still proceed
+                        pass
+
+                    st.success("All MDK- och Screen/MR-historik har raderats.")
                     st.session_state.confirm_delete = False
                     st.cache_data.clear()
                     time.sleep(2)
@@ -412,9 +420,10 @@ with st.expander("📝 Historiska scheman (Senaste 8 veckorna)"):
                 except Exception as e:
                     st.error(f"Ett fel uppstod vid radering: {e}")
         with col2:
-            if st.button("Avbryt", key="btn_cancel_clear"):
+            if st.button("Avbryt", key="btn_cancel_clear_all"):
                 st.session_state.confirm_delete = False
                 st.rerun()
+
 
 # --- UI: WORK RATES ---
 db_work_rates = {row["employee"]: row["rate"] for row in db_work_rates_list}
