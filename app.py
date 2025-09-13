@@ -17,15 +17,29 @@ st.set_page_config(
     layout="centered",
 )
 
-# --- (Optional) CSS placeholder ---
-st.markdown(
-    """
-    <style>
-    /* Add custom CSS here if needed */
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+# --- CSS FOR STYLING THE MULTISELECT WIDGET ---
+# This CSS targets the selection "tags" in the first multiselect widget on the page,
+# giving them a custom background color for better visual distinction.
+st.markdown("""
+<style>
+    /* Target the container for the first multiselect widget */
+    div[data-testid="stMultiSelect"]:first-of-type {
+        /* This selector is for scoping purposes; no specific style is needed here. */
+    }
+
+    /* Style the selected "tags" within the first multiselect widget */
+    div[data-testid="stMultiSelect"]:first-of-type [data-baseweb="tag"] {
+        background-color: #2E8B57; /* SeaGreen */
+        border-radius: 0.5rem;   /* Optional: for rounded corners */
+    }
+
+    /* Improve contrast by making the text and 'x' button white */
+    div[data-testid="stMultiSelect"]:first-of-type [data-baseweb="tag"] span,
+    div[data-testid="stMultiSelect"]:first-of-type [data-baseweb="tag"] span[role="button"] {
+        color: white !important;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # --- SWEDISH TRANSLATION SETUP ---
 SWEDISH_DAYS = {
@@ -84,6 +98,8 @@ DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 SCREEN_MR_PER_BLOCK = 1
 # Soft weekly cap (prefer no more than this many Screen/MR per person per week)
 SCREEN_MR_WEEKLY_CAP = 1
+
+
 # --- HELPERS: Weighted selection with weekly cap ---
 def _unique_weighted_choices(candidates, weight_lookup, k):
     """
@@ -98,8 +114,7 @@ def _unique_weighted_choices(candidates, weight_lookup, k):
         weights = [max(0.001, float(weight_lookup.get(c, 0))) for c in pool]
         total = sum(weights)
         if total <= 0:
-            # all zero or invalid → uniform-like
-            probs = None
+            probs = None  # uniform-like if all zero
         else:
             probs = [w / total for w in weights]
         chosen = random.choices(pool, weights=probs, k=1)[0]
@@ -187,7 +202,7 @@ with st.expander("📊 MDK-fördelning (historik)"):
     else:
         st.info("Inga MDK-uppdrag finns i historiken ännu.")
 
-# --- UI: HISTORICAL SCHEDULES (Senaste 8 veckorna) ---
+# --- UI: HISTORICAL SCHEDULES (Senaste 8 veckorna) + CLEAR HISTORY (inside expander) ---
 current_week = date.today().isocalendar()[1]
 with st.expander("📝 Historiska scheman (Senaste 8 veckorna)"):
     try:
@@ -241,30 +256,30 @@ with st.expander("📝 Historiska scheman (Senaste 8 veckorna)"):
                     else:
                         st.info(f"Inga giltiga MDK-initialer hittades i filen för vecka {week}.")
 
-# --- UI: CLEAR MDK HISTORY ---
-st.markdown("---")
-st.error("Radering av historik kan inte ångras.")
-if st.button("🗑️ Rensa all MDK-historik"):
-    st.session_state.confirm_delete = True
+    # --- CLEAR MDK HISTORY (inside this expander) ---
+    st.markdown("---")
+    st.error("Radering av historik kan inte ångras.")
+    if st.button("🗑️ Rensa all MDK-historik", key="btn_clear_mdk"):
+        st.session_state.confirm_delete = True
 
-if st.session_state.confirm_delete:
-    st.warning("**Är du helt säker på att du vill radera ALL MDK-historik?**")
-    col1, col2, _ = st.columns([1.5, 1, 4])
-    with col1:
-        if st.button("Ja, radera all historik", type="primary"):
-            try:
-                supabase.table("mdk_assignments").delete().neq("week", -1).execute()
-                st.success("All MDK-historik har raderats.")
+    if st.session_state.confirm_delete:
+        st.warning("**Är du helt säker på att du vill radera ALL MDK-historik?**")
+        col1, col2, _ = st.columns([1.5, 1, 4])
+        with col1:
+            if st.button("Ja, radera all historik", type="primary", key="btn_confirm_clear"):
+                try:
+                    supabase.table("mdk_assignments").delete().neq("week", -1).execute()
+                    st.success("All MDK-historik har raderats.")
+                    st.session_state.confirm_delete = False
+                    st.cache_data.clear()
+                    time.sleep(2)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Ett fel uppstod vid radering: {e}")
+        with col2:
+            if st.button("Avbryt", key="btn_cancel_clear"):
                 st.session_state.confirm_delete = False
-                st.cache_data.clear()
-                time.sleep(2)
                 st.rerun()
-            except Exception as e:
-                st.error(f"Ett fel uppstod vid radering: {e}")
-    with col2:
-        if st.button("Avbryt"):
-            st.session_state.confirm_delete = False
-            st.rerun()
 
 # --- UI: WORK RATES ---
 db_work_rates = {row["employee"]: row["rate"] for row in db_work_rates_list}
@@ -326,7 +341,9 @@ if st.button("✨ Generera Schema", type="primary"):
             avail_for_day = [
                 emp
                 for emp in available_employees
-                if emp not in unavailable_per_day.get(day, []) and work_rates.get(emp, 0) > 0
+                if emp not in unavailable_per_day.get(day, [])
+                and work_rates.get(emp, 0) > 0
+                and emp != "AL"  # EXCLUDE AL from any MDK assignment
             ]
             if not avail_for_day:
                 st.warning(f"Inga tillgängliga medarbetare för MDK/lunch på {SWEDISH_DAYS[day]}")
@@ -454,6 +471,7 @@ if st.button("✨ Generera Schema", type="primary"):
 
                 # Try to avoid same lab morning vs afternoon for the same person (derangement attempt)
                 afternoon_labs = labs[:]
+                afternoon_assign = {}  # ensure variable exists even if no candidates
                 for _ in range(10):
                     random.shuffle(afternoon_labs)
                     afternoon_assign = dict(zip(lab_people_afternoon, afternoon_labs))
@@ -493,9 +511,17 @@ if st.button("✨ Generera Schema", type="primary"):
             if mdk:
                 if day in mdk_cols:
                     sheet[f"{mdk_cols[day]}3"] = mdk
-            elif day == "Wednesday" and avail_day:
-                lunch_candidates = [p for p in avail_day if p not in lab_people_morning] or avail_day
-                sheet[f"{lunchvakt_col['Wednesday']}3"] = random.choice(lunch_candidates)
+            elif day == "Wednesday":
+                # Exclude AL from lunch guard, prefer non-lab morning people if possible
+                lunch_candidates = [
+                    p for p in avail_day
+                    if p != "AL" and p not in lab_people_morning
+                ] or [p for p in avail_day if p != "AL"]
+                if lunch_candidates:
+                    sheet[f"{lunchvakt_col['Wednesday']}3"] = random.choice(lunch_candidates)
+                else:
+                    # If literally only AL is available (edge case), leave blank
+                    sheet[f"{lunchvakt_col['Wednesday']}3"] = ""
 
         # --- SAVE & DOWNLOAD ---
         new_mdk_records = [{"week": current_week, "day": d, "employee": e} for d, e in mdk_assignments.items()]
