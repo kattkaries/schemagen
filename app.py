@@ -337,7 +337,7 @@ if st.button("✨ Generera Schema", type="primary"):
         assigned_this_week = Counter()
 
         for day in mdk_days:
-            # Who can take MDK on this day
+            # Who can take MDK on this day (exclude AL from MDK)
             avail_for_day = [
                 emp
                 for emp in available_employees
@@ -348,7 +348,6 @@ if st.button("✨ Generera Schema", type="primary"):
             if not avail_for_day:
                 st.warning(f"Inga tillgängliga medarbetare för MDK/lunch på {SWEDISH_DAYS[day]}")
                 continue
-
             # Score: lower is better (less historical MDK, higher rate helps, strong penalty if already assigned this week)
             scores = {}
             for emp in avail_for_day:
@@ -399,48 +398,26 @@ if st.button("✨ Generera Schema", type="primary"):
             mdk = mdk_assignments.get(day)
 
             # Determine MDK behavior
-            is_full_day_mdk = (day in ["Tuesday", "Thursday"]) and bool(mdk)
-            is_monday_mdk_morning = (day == "Monday") and bool(mdk)
+            is_full_day_mdk = (day in ["Tuesday", "Thursday"]) and bool(mdk)  # Tue/Thu MDK is full day
+            is_monday_mdk_morning = (day == "Monday") and bool(mdk)           # Mon MDK is morning only
 
-            # --- Morning Screen/MR selection (weighted + weekly cap) ---
-            pool_morning_for_screen = [
+            # ============================
+            # MORNING: FILL LABS FIRST
+            # ============================
+            # Who can do morning labs?
+            lab_eligible_morning = [
                 emp for emp in avail_day
-                if work_rates.get(emp, 0) > 0
-                and not (is_full_day_mdk and emp == mdk)               # exclude Tue/Thu MDK (full day)
-                and not (is_monday_mdk_morning and emp == mdk)         # exclude Mon MDK (morning only)
+                if not (is_full_day_mdk and emp == mdk)         # exclude Tue/Thu MDK entirely
+                and not (is_monday_mdk_morning and emp == mdk)   # exclude Mon MDK from morning only
             ]
-
-            screen_mr_morning = weighted_sample_with_cap(
-                candidates=pool_morning_for_screen,
-                weight_lookup=work_rates,
-                k=SCREEN_MR_PER_BLOCK,
-                weekly_counts=screen_mr_week_counts,
-                cap=SCREEN_MR_WEEKLY_CAP,
-            )
-
-            # Update counters
-            for s in screen_mr_morning:
-                screen_mr_week_counts[s] += 1
-                screen_mr_counts[s] += 1
-
-            # --- Morning labs: prefer those who already screened to rotate them into lab ---
-            lab_candidates_morning = [emp for emp in avail_day if emp not in screen_mr_morning]
-
-            # Respect MDK exclusions for labs
-            if mdk in lab_candidates_morning and day in ["Tuesday", "Thursday"]:
-                lab_candidates_morning.remove(mdk)  # full-day MDK out of labs
-            if mdk in lab_candidates_morning and day == "Monday":
-                lab_candidates_morning.remove(mdk)  # Mon MDK out of morning labs
-
-            # Prioritize based on prior Screen/MR counts (more Screen/MR ⇒ more priority to lab slots)
+            # Prioritize people who have screened more so they rotate into labs
             lab_priority_candidates = sorted(
-                lab_candidates_morning,
+                lab_eligible_morning,
                 key=lambda emp: screen_mr_counts.get(emp, 0),
                 reverse=True,
             )
-
-            num_lab_slots = min(len(lab_priority_candidates), 4)
-            lab_people_morning = lab_priority_candidates[:num_lab_slots]
+            morning_lab_slots = min(4, len(lab_priority_candidates))
+            lab_people_morning = lab_priority_candidates[:morning_lab_slots]
 
             # Assign morning labs to template
             random.shuffle(labs)
@@ -450,28 +427,53 @@ if st.button("✨ Generera Schema", type="primary"):
             for p, l in morning_assign.items():
                 sheet[f"{klin_col}{lab_rows['morning1'][l]}"] = p
                 sheet[f"{klin_col}{lab_rows['morning2'][l]}"] = p
+            # After labs, assign Screen/MR from the remainder only (respect MDK time-of-day rules)
+            screen_pool_morning = [
+                emp for emp in avail_day
+                if emp not in lab_people_morning
+                and work_rates.get(emp, 0) > 0
+                and not (is_full_day_mdk and emp == mdk)
+                and not (is_monday_mdk_morning and emp == mdk)
+            ]
+
+            if len(screen_pool_morning) > 0:
+                screen_mr_morning = weighted_sample_with_cap(
+                    candidates=screen_pool_morning,
+                    weight_lookup=work_rates,
+                    k=SCREEN_MR_PER_BLOCK,
+                    weekly_counts=screen_mr_week_counts,
+                    cap=SCREEN_MR_WEEKLY_CAP,
+                )
+            else:
+                screen_mr_morning = []
+
+            # Update counters for actual Screen/MR assignees
+            for s in screen_mr_morning:
+                screen_mr_week_counts[s] += 1
+                screen_mr_counts[s] += 1
 
             # Write morning Screen/MR assignee(s)
             sheet[f"{screen_cols[day]}3"] = "/".join(screen_mr_morning) if screen_mr_morning else ""
 
-            # --- Afternoon (not Friday) ---
+            # ============================
+            # AFTERNOON (not Friday): FILL LABS FIRST
+            # ============================
             if day != "Friday":
-                # Everyone available (except Tue/Thu MDK is full-day)
                 available_for_afternoon = [
                     emp for emp in avail_day
-                    if not (is_full_day_mdk and emp == mdk)
+                    if not (is_full_day_mdk and emp == mdk)   # Tue/Thu MDK stays excluded all day
                 ]
-                lab_slots = min(4, len(available_for_afternoon))
+                afternoon_lab_slots = min(4, len(available_for_afternoon))
 
                 # Prefer morning Screen/MR folks for afternoon lab slots to rotate them
-                preferred_candidates = [emp for emp in screen_mr_morning if emp in available_for_afternoon]
+                preferred_candidates = [emp for emp in (screen_mr_morning or []) if emp in available_for_afternoon]
                 other_candidates = [emp for emp in available_for_afternoon if emp not in preferred_candidates]
                 combined_candidates = preferred_candidates + other_candidates
-                lab_people_afternoon = combined_candidates[:lab_slots]
+                lab_people_afternoon = combined_candidates[:afternoon_lab_slots]
 
                 # Try to avoid same lab morning vs afternoon for the same person (derangement attempt)
                 afternoon_labs = labs[:]
-                afternoon_assign = {}  # ensure variable exists even if no candidates
+                afternoon_assign = {}
                 for _ in range(10):
                     random.shuffle(afternoon_labs)
                     afternoon_assign = dict(zip(lab_people_afternoon, afternoon_labs))
@@ -486,20 +488,22 @@ if st.button("✨ Generera Schema", type="primary"):
                 for p, l in afternoon_assign.items():
                     sheet[f"{klin_col}{lab_rows['afternoon1'][l]}"] = p
 
-                # Afternoon Screen/MR (weighted + weekly cap) from people not in afternoon labs
+                # After labs, assign Screen/MR only if anyone remains
                 afternoon_screen_pool = [
                     emp for emp in available_for_afternoon
                     if emp not in lab_people_afternoon
-                    and not (is_full_day_mdk and emp == mdk)
                     and work_rates.get(emp, 0) > 0
                 ]
-                screen_mr_afternoon = weighted_sample_with_cap(
-                    candidates=afternoon_screen_pool,
-                    weight_lookup=work_rates,
-                    k=SCREEN_MR_PER_BLOCK,
-                    weekly_counts=screen_mr_week_counts,
-                    cap=SCREEN_MR_WEEKLY_CAP,
-                )
+                if len(afternoon_screen_pool) > 0:
+                    screen_mr_afternoon = weighted_sample_with_cap(
+                        candidates=afternoon_screen_pool,
+                        weight_lookup=work_rates,
+                        k=SCREEN_MR_PER_BLOCK,
+                        weekly_counts=screen_mr_week_counts,
+                        cap=SCREEN_MR_WEEKLY_CAP,
+                    )
+                else:
+                    screen_mr_afternoon = []
 
                 for s in screen_mr_afternoon:
                     screen_mr_week_counts[s] += 1
@@ -512,16 +516,9 @@ if st.button("✨ Generera Schema", type="primary"):
                 if day in mdk_cols:
                     sheet[f"{mdk_cols[day]}3"] = mdk
             elif day == "Wednesday":
-                # Exclude AL from lunch guard, prefer non-lab morning people if possible
-                lunch_candidates = [
-                    p for p in avail_day
-                    if p != "AL" and p not in lab_people_morning
-                ] or [p for p in avail_day if p != "AL"]
-                if lunch_candidates:
-                    sheet[f"{lunchvakt_col['Wednesday']}3"] = random.choice(lunch_candidates)
-                else:
-                    # If literally only AL is available (edge case), leave blank
-                    sheet[f"{lunchvakt_col['Wednesday']}3"] = ""
+                # Lunch guard: AL is allowed as normal now; prefer non-lab morning people if possible
+                lunch_candidates = [p for p in avail_day if p not in lab_people_morning] or avail_day
+                sheet[f"{lunchvakt_col['Wednesday']}3"] = random.choice(lunch_candidates) if lunch_candidates else ""
 
         # --- SAVE & DOWNLOAD ---
         new_mdk_records = [{"week": current_week, "day": d, "employee": e} for d, e in mdk_assignments.items()]
