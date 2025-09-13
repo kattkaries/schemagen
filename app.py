@@ -19,8 +19,6 @@ st.set_page_config(
 )
 
 # --- CSS FOR STYLING THE MULTISELECT WIDGET ---
-# This CSS targets the selection "tags" in the first multiselect widget on the page,
-# giving them a custom background color for better visual distinction.
 st.markdown("""
 <style>
     /* Target the container for the first multiselect widget */
@@ -110,11 +108,12 @@ PRE_UNAVAILABLE = {
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 
 # --- Screen/MR configuration ---
-SCREEN_MR_PER_BLOCK = 1           # number of Screen/MR assignees per morning/afternoon
-SCREEN_MR_WEEKLY_CAP = 1          # soft cap per person/week
+SCREEN_MR_PER_BLOCK = 1            # number of Screen/MR assignees per morning/afternoon
+SCREEN_MR_WEEKLY_CAP = 1           # max Screen/MR per person per week
+SCREEN_MR_HARD_WEEKLY_CAP = True   # enforce the weekly cap strictly
+NO_CONSECUTIVE_DAYS = True         # try to avoid assigning the same person two days in a row
 
-
-# --- HELPERS: Weighted selection with weekly cap ---
+# --- HELPERS: Weighted selection + constraints ---
 def _unique_weighted_choices(candidates, weight_lookup, k):
     """
     Choose k unique items from candidates using their weights (probabilities ∝ work rate).
@@ -123,7 +122,7 @@ def _unique_weighted_choices(candidates, weight_lookup, k):
     if k <= 0 or not candidates:
         return []
     picks = []
-    pool = list(candidates)
+    pool = list(dict.fromkeys(candidates))  # keep order, unique
     while pool and len(picks) < k:
         weights = [max(0.001, float(weight_lookup.get(c, 0))) for c in pool]
         total = sum(weights)
@@ -133,30 +132,32 @@ def _unique_weighted_choices(candidates, weight_lookup, k):
         pool.remove(chosen)
     return picks
 
+DAY_IDX = {"Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3, "Friday": 4}
 
-def weighted_sample_with_cap(candidates, weight_lookup, k, weekly_counts, cap):
+def build_screen_pool(base_pool, work_rates, weekly_counts, last_screen_day, day):
     """
-    Prefer people under the weekly cap; if not enough candidates under-cap, fill from over-cap pool.
+    Apply constraints to the base pool:
+    - only >0 work rate
+    - exclude 'yesterday' if NO_CONSECUTIVE_DAYS
+    - enforce weekly cap if SCREEN_MR_HARD_WEEKLY_CAP
     """
-    if k <= 0 or not candidates:
-        return []
-    under_cap = [c for c in candidates if weekly_counts.get(c, 0) < cap]
-    if len(under_cap) >= k:
-        return _unique_weighted_choices(under_cap, weight_lookup, k)
-    picks = under_cap[:]
-    remaining_k = k - len(picks)
-    over_cap_pool = [c for c in candidates if c not in picks]
-    if remaining_k > 0 and over_cap_pool:
-        picks.extend(_unique_weighted_choices(over_cap_pool, weight_lookup, remaining_k))
-    return picks
+    day_idx = DAY_IDX[day]
+    pool = [e for e in base_pool if work_rates.get(e, 0) > 0]
 
+    if NO_CONSECUTIVE_DAYS:
+        pool = [e for e in pool if last_screen_day.get(e, None) != day_idx - 1]
+
+    if SCREEN_MR_HARD_WEEKLY_CAP:
+        pool = [e for e in pool if weekly_counts.get(e, 0) < SCREEN_MR_WEEKLY_CAP]
+
+    return pool
 
 # --- UI: TITLE AND INSTRUCTIONS ---
 st.title("📅 Schemagenerator för världens bästa enhet!")
 st.info(
     "**💡 Användarinstruktioner:**\n\n"
     "1. **Ange frånvaro:** Markera medarbetare som är frånvarande hela veckan eller specifika dagar.\n"
-    "2. **Granska & justera:** Kontrollera MDK-historiken och arbetstiden. Spara eventuella ändringar i arbetstid.\n"
+    "2. **Granska & justera:** Kontrollera historik och arbetstid. Spara eventuella ändringar i arbetstid.\n"
     "3. **Generera:** Klicka på '✨ Generera Schema' för att skapa ett nytt veckoschema.\n"
     "4. **Ladda hem:** Klicka på '📥 Ladda ner schemat' för ta hem det."
 )
@@ -210,7 +211,7 @@ with st.expander("📊 MDK-fördelning (historik)"):
     else:
         st.info("Inga MDK-uppdrag finns i historiken ännu.")
 
-# --- NEW UI: Screen/MR DISTRIBUTION CHART (historik) ---
+# --- UI: Screen/MR DISTRIBUTION CHART (historik) ---
 with st.expander("📊 Screen/MR‑fördelning (historik)"):
     if all_screen_mr_sessions:
         weeks_available = sorted({row["week"] for row in all_screen_mr_sessions}, reverse=True)
@@ -254,7 +255,6 @@ with st.expander("📊 Screen/MR‑fördelning (historik)"):
                 fig_sm.update_yaxes(dtick=1)
                 st.plotly_chart(fig_sm, use_container_width=True)
 
-                # CSV export
                 csv = "employee,count\n" + "\n".join(f"{d['employee']},{d['count']}" for d in data)
                 st.download_button(
                     "⬇️ Ladda ner som CSV",
@@ -263,17 +263,14 @@ with st.expander("📊 Screen/MR‑fördelning (historik)"):
                     mime="text/csv",
                 )
 
-            else:  # Per block (stacked)
-                # Aggregate by (employee, block)
+            else:
                 counts_by_pair = Counter((row["employee"], row.get("block", "unknown")) for row in filtered)
                 blocks = ["morning", "afternoon"]
-                # Build stacked chart data
                 bar_data = []
                 for (emp, blk), c in counts_by_pair.items():
                     if blk not in blocks:
                         continue
                     bar_data.append({"employee": emp, "block": "FM" if blk == "morning" else "EM", "count": c})
-                # Ensure deterministic ordering
                 bar_data.sort(key=lambda x: (x["employee"], x["block"]))
 
                 fig_stacked = px.bar(
@@ -290,7 +287,6 @@ with st.expander("📊 Screen/MR‑fördelning (historik)"):
                 fig_stacked.update_yaxes(dtick=1)
                 st.plotly_chart(fig_stacked, use_container_width=True)
 
-                # CSV export
                 csv2 = "employee,block,count\n" + "\n".join(f"{d['employee']},{d['block']},{d['count']}" for d in bar_data)
                 st.download_button(
                     "⬇️ Ladda ner som CSV",
@@ -336,7 +332,6 @@ with st.expander("📝 Historiska scheman (Senaste 8 veckorna)"):
                     wb = openpyxl.load_workbook(io.BytesIO(downloaded))
                     sheet = wb["Blad1"] if "Blad1" in wb.sheetnames else wb.active
 
-                    # Mappings used in the template
                     mdk_cols = {"Monday": "D", "Tuesday": "H", "Thursday": "P"}
                     screen_cols = {"Monday": "C", "Tuesday": "G", "Wednesday": "K", "Thursday": "O", "Friday": "S"}
 
@@ -358,12 +353,10 @@ with st.expander("📝 Historiska scheman (Senaste 8 veckorna)"):
 
                     parsed_screen_mr = []
                     for d in DAYS:
-                        # Morning
                         m_col_idx = openpyxl.utils.column_index_from_string(screen_cols[d])
                         m_val = sheet.cell(row=3, column=m_col_idx).value
                         for emp in parse_initials(m_val):
                             parsed_screen_mr.append({"week": week, "day": d, "block": "morning", "employee": emp})
-                        # Afternoon
                         a_val = sheet.cell(row=14, column=m_col_idx).value
                         for emp in parse_initials(a_val):
                             parsed_screen_mr.append({"week": week, "day": d, "block": "afternoon", "employee": emp})
@@ -403,15 +396,11 @@ with st.expander("📝 Historiska scheman (Senaste 8 veckorna)"):
         with col1:
             if st.button("Ja, radera all historik", type="primary", key="btn_confirm_clear_all"):
                 try:
-                    # Always delete MDK
                     supabase.table("mdk_assignments").delete().neq("week", -1).execute()
-                    # Try to delete Screen/MR (ignore if table not created yet)
                     try:
                         supabase.table("screen_mr_sessions").delete().neq("week", -1).execute()
                     except Exception:
-                        # If the table doesn't exist yet, we still proceed
                         pass
-
                     st.success("All MDK- och Screen/MR-historik har raderats.")
                     st.session_state.confirm_delete = False
                     st.cache_data.clear()
@@ -423,7 +412,6 @@ with st.expander("📝 Historiska scheman (Senaste 8 veckorna)"):
             if st.button("Avbryt", key="btn_cancel_clear_all"):
                 st.session_state.confirm_delete = False
                 st.rerun()
-
 
 # --- UI: WORK RATES ---
 db_work_rates = {row["employee"]: row["rate"] for row in db_work_rates_list}
@@ -530,11 +518,13 @@ if st.button("✨ Generera Schema", type="primary"):
         }
         labs = list(lab_rows["morning1"].keys())
 
-        # Counters for fairness & weekly cap
+        # Counters & trackers for Screen/MR fairness and constraints
         screen_mr_counts = Counter()       # for intra-week balancing lab vs. screen
-        screen_mr_week_counts = Counter()  # for enforcing ~once/week cap on Screen/MR
+        screen_mr_week_counts = Counter()  # HARD weekly cap tracking
+        last_screen_day = {}               # emp -> day_idx last screened this week
 
         for day in DAYS:
+            day_idx = DAY_IDX[day]
             # Who is available today
             avail_day = [
                 emp
@@ -543,7 +533,7 @@ if st.button("✨ Generera Schema", type="primary"):
             ]
             mdk = mdk_assignments.get(day)
 
-            # Determine MDK behavior
+            # MDK behavior
             is_full_day_mdk = (day in ["Tuesday", "Thursday"]) and bool(mdk)  # Tue/Thu: full day MDK
             is_monday_mdk_morning = (day == "Monday") and bool(mdk)           # Mon: morning MDK
 
@@ -555,6 +545,7 @@ if st.button("✨ Generera Schema", type="primary"):
                 if not (is_full_day_mdk and emp == mdk)         # exclude Tue/Thu MDK entirely
                 and not (is_monday_mdk_morning and emp == mdk)   # exclude Mon MDK from morning only
             ]
+            # Prioritize people who have screened more → rotate them into labs
             lab_priority_candidates = sorted(
                 lab_eligible_morning,
                 key=lambda emp: screen_mr_counts.get(emp, 0),
@@ -563,7 +554,7 @@ if st.button("✨ Generera Schema", type="primary"):
             morning_lab_slots = min(4, len(lab_priority_candidates))
             lab_people_morning = lab_priority_candidates[:morning_lab_slots]
 
-            # Assign morning labs to template
+            # Assign morning labs
             random.shuffle(labs)
             morning_assign = dict(zip(lab_people_morning, labs))
 
@@ -572,29 +563,30 @@ if st.button("✨ Generera Schema", type="primary"):
                 sheet[f"{klin_col}{lab_rows['morning1'][l]}"] = p
                 sheet[f"{klin_col}{lab_rows['morning2'][l]}"] = p
 
-            # After labs, assign Screen/MR from the remainder only
-            screen_pool_morning = [
+            # After labs, assign Screen/MR from the remainder (apply HARD weekly cap + cooldown)
+            screen_base_pool_morning = [
                 emp for emp in avail_day
                 if emp not in lab_people_morning
-                and work_rates.get(emp, 0) > 0
                 and not (is_full_day_mdk and emp == mdk)
                 and not (is_monday_mdk_morning and emp == mdk)
             ]
+            screen_pool_morning = build_screen_pool(
+                base_pool=screen_base_pool_morning,
+                work_rates=work_rates,
+                weekly_counts=screen_mr_week_counts,
+                last_screen_day=last_screen_day,
+                day=day,
+            )
 
             if len(screen_pool_morning) > 0:
-                screen_mr_morning = weighted_sample_with_cap(
-                    candidates=screen_pool_morning,
-                    weight_lookup=work_rates,
-                    k=SCREEN_MR_PER_BLOCK,
-                    weekly_counts=screen_mr_week_counts,
-                    cap=SCREEN_MR_WEEKLY_CAP,
-                )
+                screen_mr_morning = _unique_weighted_choices(screen_pool_morning, work_rates, SCREEN_MR_PER_BLOCK)
             else:
                 screen_mr_morning = []
 
             for s in screen_mr_morning:
                 screen_mr_week_counts[s] += 1
                 screen_mr_counts[s] += 1
+                last_screen_day[s] = day_idx
 
             sheet[f"{screen_cols[day]}3"] = "/".join(screen_mr_morning) if screen_mr_morning else ""
 
@@ -606,14 +598,13 @@ if st.button("✨ Generera Schema", type="primary"):
                     emp for emp in avail_day
                     if not (is_full_day_mdk and emp == mdk)   # Tue/Thu MDK excluded all day
                 ]
-                afternoon_lab_slots = min(4, len(available_for_afternoon))
+                afternoon_lab_candidates = available_for_afternoon[:]
+                # Rotate prior screeners into labs
+                afternoon_lab_candidates.sort(key=lambda emp: screen_mr_counts.get(emp, 0), reverse=True)
+                afternoon_lab_slots = min(4, len(afternoon_lab_candidates))
+                lab_people_afternoon = afternoon_lab_candidates[:afternoon_lab_slots]
 
-                preferred_candidates = [emp for emp in (screen_mr_morning or []) if emp in available_for_afternoon]
-                other_candidates = [emp for emp in available_for_afternoon if emp not in preferred_candidates]
-                combined_candidates = preferred_candidates + other_candidates
-                lab_people_afternoon = combined_candidates[:afternoon_lab_slots]
-
-                # Try to avoid same lab morning vs afternoon for the same person
+                # Avoid same lab assignment AM vs PM for same person if possible
                 afternoon_labs = labs[:]
                 afternoon_assign = {}
                 for _ in range(10):
@@ -629,26 +620,28 @@ if st.button("✨ Generera Schema", type="primary"):
                 for p, l in afternoon_assign.items():
                     sheet[f"{klin_col}{lab_rows['afternoon1'][l]}"] = p
 
-                # After labs, assign Screen/MR if anyone remains
-                afternoon_screen_pool = [
+                # After labs, assign Screen/MR (HARD weekly cap + cooldown)
+                screen_base_pool_afternoon = [
                     emp for emp in available_for_afternoon
                     if emp not in lab_people_afternoon
-                    and work_rates.get(emp, 0) > 0
                 ]
-                if len(afternoon_screen_pool) > 0:
-                    screen_mr_afternoon = weighted_sample_with_cap(
-                        candidates=afternoon_screen_pool,
-                        weight_lookup=work_rates,
-                        k=SCREEN_MR_PER_BLOCK,
-                        weekly_counts=screen_mr_week_counts,
-                        cap=SCREEN_MR_WEEKLY_CAP,
-                    )
+                screen_pool_afternoon = build_screen_pool(
+                    base_pool=screen_base_pool_afternoon,
+                    work_rates=work_rates,
+                    weekly_counts=screen_mr_week_counts,
+                    last_screen_day=last_screen_day,
+                    day=day,
+                )
+
+                if len(screen_pool_afternoon) > 0:
+                    screen_mr_afternoon = _unique_weighted_choices(screen_pool_afternoon, work_rates, SCREEN_MR_PER_BLOCK)
                 else:
                     screen_mr_afternoon = []
 
                 for s in screen_mr_afternoon:
                     screen_mr_week_counts[s] += 1
                     screen_mr_counts[s] += 1
+                    last_screen_day[s] = day_idx
 
                 sheet[f"{screen_cols[day]}14"] = "/".join(screen_mr_afternoon) if screen_mr_afternoon else ""
 
