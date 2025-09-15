@@ -159,7 +159,7 @@ st.info(
     "1. **Ange frånvaro:** Markera medarbetare som är frånvarande hela veckan eller specifika dagar.\n"
     "2. **Granska & justera:** Kontrollera historik och arbetstid. Spara eventuella ändringar i arbetstid.\n"
     "3. **Generera:** Klicka på '✨ Generera Schema' för att skapa ett nytt veckoschema.\n"
-    "4. **Ladda hem:** Klicka på '📥 Ladda ner schemat' för ta hem det."
+    "4. **Ladda hem:** Klicka på '📥 Ladda ner schemat' för att ta hem det."
 )
 
 # --- UI: EMPLOYEE AVAILABILITY ---
