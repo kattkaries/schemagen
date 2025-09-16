@@ -19,6 +19,8 @@ st.set_page_config(
 )
 
 # --- CSS FOR STYLING THE MULTISELECT WIDGET ---
+# This CSS targets the selection "tags" in the first multiselect widget on the page,
+# giving them a custom background color for better visual distinction.
 st.markdown("""
 <style>
     /* Target the container for the first multiselect widget */
@@ -107,13 +109,7 @@ PRE_UNAVAILABLE = {
 }
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 
-# --- Screen/MR configuration ---
-SCREEN_MR_PER_BLOCK = 1            # number of Screen/MR assignees per morning/afternoon
-SCREEN_MR_WEEKLY_CAP = 1           # max Screen/MR per person per week
-SCREEN_MR_HARD_WEEKLY_CAP = True   # enforce the weekly cap strictly
-NO_CONSECUTIVE_DAYS = True         # try to avoid assigning the same person two days in a row
-
-# --- HELPERS: Weighted selection + constraints ---
+# --- (Optional) Weighted picker retained for future use (not used in remainder approach) ---
 def _unique_weighted_choices(candidates, weight_lookup, k):
     """
     Choose k unique items from candidates using their weights (probabilities ∝ work rate).
@@ -132,25 +128,6 @@ def _unique_weighted_choices(candidates, weight_lookup, k):
         pool.remove(chosen)
     return picks
 
-DAY_IDX = {"Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3, "Friday": 4}
-
-def build_screen_pool(base_pool, work_rates, weekly_counts, last_screen_day, day):
-    """
-    Apply constraints to the base pool:
-    - only >0 work rate
-    - exclude 'yesterday' if NO_CONSECUTIVE_DAYS
-    - enforce weekly cap if SCREEN_MR_HARD_WEEKLY_CAP
-    """
-    day_idx = DAY_IDX[day]
-    pool = [e for e in base_pool if work_rates.get(e, 0) > 0]
-
-    if NO_CONSECUTIVE_DAYS:
-        pool = [e for e in pool if last_screen_day.get(e, None) != day_idx - 1]
-
-    if SCREEN_MR_HARD_WEEKLY_CAP:
-        pool = [e for e in pool if weekly_counts.get(e, 0) < SCREEN_MR_WEEKLY_CAP]
-
-    return pool
 
 # --- UI: TITLE AND INSTRUCTIONS ---
 st.title("📅 Schemagenerator för världens bästa enhet!")
@@ -332,6 +309,7 @@ with st.expander("📝 Historiska scheman (Senaste 8 veckorna)"):
                     wb = openpyxl.load_workbook(io.BytesIO(downloaded))
                     sheet = wb["Blad1"] if "Blad1" in wb.sheetnames else wb.active
 
+                    # Mappings used in the template
                     mdk_cols = {"Monday": "D", "Tuesday": "H", "Thursday": "P"}
                     screen_cols = {"Monday": "C", "Tuesday": "G", "Wednesday": "K", "Thursday": "O", "Friday": "S"}
 
@@ -353,10 +331,12 @@ with st.expander("📝 Historiska scheman (Senaste 8 veckorna)"):
 
                     parsed_screen_mr = []
                     for d in DAYS:
+                        # Morning
                         m_col_idx = openpyxl.utils.column_index_from_string(screen_cols[d])
                         m_val = sheet.cell(row=3, column=m_col_idx).value
                         for emp in parse_initials(m_val):
                             parsed_screen_mr.append({"week": week, "day": d, "block": "morning", "employee": emp})
+                        # Afternoon
                         a_val = sheet.cell(row=14, column=m_col_idx).value
                         for emp in parse_initials(a_val):
                             parsed_screen_mr.append({"week": week, "day": d, "block": "afternoon", "employee": emp})
@@ -400,7 +380,7 @@ with st.expander("📝 Historiska scheman (Senaste 8 veckorna)"):
                     try:
                         supabase.table("screen_mr_sessions").delete().neq("week", -1).execute()
                     except Exception:
-                        pass
+                        pass  # ignore if table not created yet
                     st.success("All MDK- och Screen/MR-historik har raderats.")
                     st.session_state.confirm_delete = False
                     st.cache_data.clear()
@@ -481,7 +461,7 @@ if st.button("✨ Generera Schema", type="primary"):
                 st.warning(f"Inga tillgängliga medarbetare för MDK/lunch på {SWEDISH_DAYS[day]}")
                 continue
 
-            # Score: lower is better
+            # Score: lower is better (less historical MDK; higher work rate helps)
             scores = {}
             for emp in avail_for_day:
                 history_count = mdk_history_counts.get(emp, 0)
@@ -518,14 +498,11 @@ if st.button("✨ Generera Schema", type="primary"):
         }
         labs = list(lab_rows["morning1"].keys())
 
-        # Counters & trackers for Screen/MR fairness and constraints
-        screen_mr_counts = Counter()       # for intra-week balancing lab vs. screen
-        screen_mr_week_counts = Counter()  # HARD weekly cap tracking
-        last_screen_day = {}               # emp -> day_idx last screened this week
+        # Counter for Screen/MR → used to rotate those with more Screen/MR into labs later
+        screen_mr_counts = Counter()
 
         for day in DAYS:
-            day_idx = DAY_IDX[day]
-            # Who is available today
+            # Who is available today (do not filter by work rate here; they should still be assigned)
             avail_day = [
                 emp
                 for emp in available_employees
@@ -533,8 +510,8 @@ if st.button("✨ Generera Schema", type="primary"):
             ]
             mdk = mdk_assignments.get(day)
 
-            # MDK behavior
-            is_full_day_mdk = (day in ["Tuesday", "Thursday"]) and bool(mdk)  # Tue/Thu: full day MDK
+            # Determine MDK behavior
+            is_full_day_mdk = (day in ["Tuesday", "Thursday"]) and bool(mdk)  # Tue/Thu: full-day MDK (excluded all day)
             is_monday_mdk_morning = (day == "Monday") and bool(mdk)           # Mon: morning MDK
 
             # ============================
@@ -563,32 +540,28 @@ if st.button("✨ Generera Schema", type="primary"):
                 sheet[f"{klin_col}{lab_rows['morning1'][l]}"] = p
                 sheet[f"{klin_col}{lab_rows['morning2'][l]}"] = p
 
-            # After labs, assign Screen/MR from the remainder (apply HARD weekly cap + cooldown)
-            screen_base_pool_morning = [
+            # --- Wednesday lunch guard BEFORE Screen/MR remainder (only when NO MDK) ---
+            lunch_guard = None
+            if not mdk and day == "Wednesday":
+                lunch_candidates = [p for p in avail_day if p not in lab_people_morning] or avail_day
+                if lunch_candidates:
+                    lunch_guard = random.choice(lunch_candidates)
+                    sheet[f"{lunchvakt_col['Wednesday']}3"] = lunch_guard
+
+            # Morning Screen/MR remainder (everyone left after Labs + MDK (time-of-day) + Lunch)
+            morning_remainder = [
                 emp for emp in avail_day
                 if emp not in lab_people_morning
                 and not (is_full_day_mdk and emp == mdk)
                 and not (is_monday_mdk_morning and emp == mdk)
+                and emp != lunch_guard
             ]
-            screen_pool_morning = build_screen_pool(
-                base_pool=screen_base_pool_morning,
-                work_rates=work_rates,
-                weekly_counts=screen_mr_week_counts,
-                last_screen_day=last_screen_day,
-                day=day,
-            )
+            # Sort for stable display; join with '/'
+            sheet[f"{screen_cols[day]}3"] = "/".join(sorted(morning_remainder)) if morning_remainder else ""
 
-            if len(screen_pool_morning) > 0:
-                screen_mr_morning = _unique_weighted_choices(screen_pool_morning, work_rates, SCREEN_MR_PER_BLOCK)
-            else:
-                screen_mr_morning = []
-
-            for s in screen_mr_morning:
-                screen_mr_week_counts[s] += 1
+            # Update counters for rotation fairness (count everyone who is in Screen/MR remainder)
+            for s in morning_remainder:
                 screen_mr_counts[s] += 1
-                last_screen_day[s] = day_idx
-
-            sheet[f"{screen_cols[day]}3"] = "/".join(screen_mr_morning) if screen_mr_morning else ""
 
             # ============================
             # AFTERNOON (not Friday): FILL LABS FIRST
@@ -598,13 +571,13 @@ if st.button("✨ Generera Schema", type="primary"):
                     emp for emp in avail_day
                     if not (is_full_day_mdk and emp == mdk)   # Tue/Thu MDK excluded all day
                 ]
-                afternoon_lab_candidates = available_for_afternoon[:]
                 # Rotate prior screeners into labs
+                afternoon_lab_candidates = available_for_afternoon[:]
                 afternoon_lab_candidates.sort(key=lambda emp: screen_mr_counts.get(emp, 0), reverse=True)
                 afternoon_lab_slots = min(4, len(afternoon_lab_candidates))
                 lab_people_afternoon = afternoon_lab_candidates[:afternoon_lab_slots]
 
-                # Avoid same lab assignment AM vs PM for same person if possible
+                # Try to avoid same lab assignment AM vs PM for the same person
                 afternoon_labs = labs[:]
                 afternoon_assign = {}
                 for _ in range(10):
@@ -620,39 +593,19 @@ if st.button("✨ Generera Schema", type="primary"):
                 for p, l in afternoon_assign.items():
                     sheet[f"{klin_col}{lab_rows['afternoon1'][l]}"] = p
 
-                # After labs, assign Screen/MR (HARD weekly cap + cooldown)
-                screen_base_pool_afternoon = [
+                # Afternoon Screen/MR remainder (everyone left after PM Labs + (full-day MDK))
+                afternoon_remainder = [
                     emp for emp in available_for_afternoon
                     if emp not in lab_people_afternoon
                 ]
-                screen_pool_afternoon = build_screen_pool(
-                    base_pool=screen_base_pool_afternoon,
-                    work_rates=work_rates,
-                    weekly_counts=screen_mr_week_counts,
-                    last_screen_day=last_screen_day,
-                    day=day,
-                )
+                sheet[f"{screen_cols[day]}14"] = "/".join(sorted(afternoon_remainder)) if afternoon_remainder else ""
 
-                if len(screen_pool_afternoon) > 0:
-                    screen_mr_afternoon = _unique_weighted_choices(screen_pool_afternoon, work_rates, SCREEN_MR_PER_BLOCK)
-                else:
-                    screen_mr_afternoon = []
-
-                for s in screen_mr_afternoon:
-                    screen_mr_week_counts[s] += 1
+                for s in afternoon_remainder:
                     screen_mr_counts[s] += 1
-                    last_screen_day[s] = day_idx
 
-                sheet[f"{screen_cols[day]}14"] = "/".join(screen_mr_afternoon) if screen_mr_afternoon else ""
-
-            # --- MDK & Lunch Guard (Wednesday only) ---
-            if mdk:
-                if day in mdk_cols:
-                    sheet[f"{mdk_cols[day]}3"] = mdk
-            elif day == "Wednesday":
-                # Lunch guard: AL allowed normally; prefer non-lab morning people
-                lunch_candidates = [p for p in avail_day if p not in lab_people_morning] or avail_day
-                sheet[f"{lunchvakt_col['Wednesday']}3"] = random.choice(lunch_candidates) if lunch_candidates else ""
+            # --- MDK (write after) ---
+            if mdk and day in mdk_cols:
+                sheet[f"{mdk_cols[day]}3"] = mdk
 
         # --- EXCEL DOWNLOAD (no DB writes here) ---
         output_file = io.BytesIO()
